@@ -1,0 +1,42 @@
+package com.feed.data;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class Post {
+    public String id;
+    public String author;
+    public String uuid;
+    public String text;
+    public String type;
+    public String createdAt;
+    public int commentCount;
+    public Map<String, Integer> reactions = new HashMap<>();
+    public String myReaction;
+    public List<String> tags;
+    public boolean solved;
+
+    public Post() {
+    }
+
+    public PostType postType() {
+        return PostType.byId(type);
+    }
+
+    public int reactionCount(String key) {
+        return reactions.getOrDefault(key, 0);
+    }
+
+    public boolean mine(String key) {
+        return key != null && key.equals(myReaction);
+    }
+
+    public String displayPrefix() {
+        return solved ? "[✓]" : postType().prefix;
+    }
+
+    public int prefixColor() {
+        return solved ? 0xFF55FF55 : postType().accent;
+    }
+}
