@@ -58,6 +58,17 @@
   "feed.configuration.showInventoryButton": "Кнопка в инвентаре",
   "feed.configuration.inventoryButtonOffsetX": "Смещение кнопки X",
   "feed.configuration.inventoryButtonOffsetY": "Смещение кнопки Y",
+  "feed.screen.feed.new_above": "НОВЫЕ \u2191 %d",
+  "feed.screen.post.delete": "УДЛ",
+  "feed.screen.post.report": "ЖАЛОБА",
+  "feed.screen.post.reported": "Жалоба отправлена",
+  "feed.configuration.features": "Функции",
+  "feed.configuration.enableDeathHook": "Пост при смерти",
+  "feed.configuration.enableToastNotifications": "Тосты ответов",
+  "feed.configuration.enableAdvancementGg": "GG за достижение",
+  "feed.screen.error.auth": "Ошибка авторизации — перезайди",
+  "feed.screen.error.auth_offline": "Нужен вход через Microsoft для MineFeed",
+  "feed.screen.error.dev_auth": "Dev auth выкл на воркере — поставь DEV_AUTH=1 и задеплой",
   "key.feed.open": "Открыть MineFeed",
   "key.categories.feed": "MineFeed"
 }

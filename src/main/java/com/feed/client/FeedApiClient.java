@@ -1,16 +1,18 @@
 package com.feed.client;
 
+import com.feed.Feed;
 import com.feed.data.Comment;
 import com.feed.data.FeedResponse;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import com.feed.data.SolveResult;
 import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
 
+import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -18,12 +20,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Async HTTP client for the Feed proxy. Callbacks run off-thread;
@@ -35,6 +36,7 @@ public final class FeedApiClient {
 
     private static final Gson GSON = new Gson();
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    private static final Type FEED_TYPE = new TypeToken<FeedResponse>() {}.getType();
 
     // XOR-obfuscated APP_TOKEN (must match Worker secret). Regenerate via TokenGen.
     private static final byte[] TOKEN_OBF = {
@@ -48,15 +50,21 @@ public final class FeedApiClient {
             0x29, 0x2C, 0x22, 0x6D, 0x6C, 0x6B
     };
 
-    // Split so `strings feed.jar` does not expose the full URL.
     private static final String PROXY_BASE =
             "https:" + "//feed-proxy.kakouto4elovek.workers.dev";
 
     private final HttpClient http = FeedHttp.CLIENT;
 
+    private volatile String feedEtag;
+    private final Map<String, String> commentEtags = new ConcurrentHashMap<>();
+
     public record ReactResult(Map<String, Integer> counts, String active) {}
 
-    public record CommentsPage(List<Comment> comments, String nextBefore) {}
+    public record CommentsPage(List<Comment> comments, String nextBefore, boolean notModified) {
+        public CommentsPage(List<Comment> comments, String nextBefore) {
+            this(comments, nextBefore, false);
+        }
+    }
 
     public record TagCount(String tag, int count) {}
 
@@ -64,6 +72,9 @@ public final class FeedApiClient {
                           String author, String text, String createdAt) {}
 
     public record NotificationsResult(List<Notif> notifications, String latest) {}
+
+    public record FeedPage(FeedResponse body, boolean notModified) {}
+
 
     private FeedApiClient() {
     }
@@ -76,11 +87,17 @@ public final class FeedApiClient {
         return new String(b, StandardCharsets.US_ASCII);
     }
 
-    public CompletableFuture<FeedResponse> fetchFeed(String cursor, int limit, String tag, boolean mine) {
+    private static void addPlayerIdentity(JsonObject body) {
+        var user = Minecraft.getInstance().getUser();
+        body.addProperty("author", user.getName());
+        body.addProperty("uuid", user.getProfileId().toString());
+    }
+
+    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine) {
         return fetchFeed(cursor, limit, tag, mine, false);
     }
 
-    public CompletableFuture<FeedResponse> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
+    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
         StringBuilder url = new StringBuilder(base())
                 .append("/v1/feed?limit=").append(limit)
                 .append("&uuid=").append(Minecraft.getInstance().getUser().getProfileId().toString());
@@ -96,18 +113,29 @@ public final class FeedApiClient {
         if (fresh) {
             url.append("&fresh=1");
         }
-        return send(builder(URI.create(url.toString()))
-                .timeout(REQUEST_TIMEOUT).GET().build(), FeedResponse.class);
+        HttpRequest.Builder req = builder(URI.create(url.toString()))
+                .timeout(REQUEST_TIMEOUT).GET();
+        if (fresh && feedEtag != null && (cursor == null || cursor.isEmpty()) && !mine
+                && (tag == null || tag.isEmpty())) {
+            req.header("If-None-Match", feedEtag);
+        }
+        return http.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> {
+                    if (resp.statusCode() == 304) {
+                        return new FeedPage(null, true);
+                    }
+                    resp.headers().firstValue("etag").ifPresent(e -> feedEtag = e);
+                    FeedResponse body = GSON.fromJson(checkBody(resp), FEED_TYPE);
+                    return new FeedPage(body, false);
+                });
     }
 
     public CompletableFuture<Post> createPost(String text, PostType type) {
-        var user = Minecraft.getInstance().getUser();
-        String body = GSON.toJson(Map.of(
-                "author", user.getName(),
-                "uuid", user.getProfileId().toString(),
-                "text", text,
-                "type", type.id));
-        return postRaw("/v1/posts", body).thenApply(resp -> {
+        JsonObject body = new JsonObject();
+        body.addProperty("text", text);
+        body.addProperty("type", type.id);
+        addPlayerIdentity(body);
+        return postRaw("/v1/posts", body.toString()).thenApply(resp -> {
             JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
             if (o.has("post")) {
                 return GSON.fromJson(o.get("post"), Post.class);
@@ -116,30 +144,34 @@ public final class FeedApiClient {
         });
     }
 
-    public CompletableFuture<ReactResult> toggleReaction(String postId, String uuid, String key) {
+    public CompletableFuture<ReactResult> toggleReaction(String postId, String key) {
         JsonObject body = new JsonObject();
         body.addProperty("postId", postId);
-        body.addProperty("uuid", uuid);
         body.addProperty("key", key);
+        addPlayerIdentity(body);
         return postRaw("/v1/react", body.toString()).thenApply(resp -> {
-            try {
-                JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
-                Map<String, Integer> counts = new HashMap<>();
-                for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("counts").entrySet()) {
-                    counts.put(e.getKey(), e.getValue().getAsInt());
-                }
-                return new ReactResult(counts, jstr(o, "active"));
-            } catch (Exception e) {
-                return null;
-            }
+            JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
+            Map<String, Integer> counts = GSON.fromJson(o.get("counts"),
+                    new TypeToken<Map<String, Integer>>() {}.getType());
+            return new ReactResult(counts, FeedUtil.jstr(o, "active"));
         });
     }
 
     public CompletableFuture<CommentsPage> fetchComments(String postId, String before) {
-        return fetchComments(postId, before, false);
+        return fetchComments(postId, before, false, false);
     }
 
     public CompletableFuture<CommentsPage> fetchComments(String postId, String before, boolean fresh) {
+        return fetchComments(postId, before, fresh, false);
+    }
+
+    /** Live poll only — may return 304 when comments unchanged. */
+    public CompletableFuture<CommentsPage> fetchCommentsIfCached(String postId) {
+        return fetchComments(postId, null, true, true);
+    }
+
+    private CompletableFuture<CommentsPage> fetchComments(
+            String postId, String before, boolean fresh, boolean useEtag) {
         StringBuilder path = new StringBuilder("/v1/posts/").append(postId).append("/comments");
         boolean first = true;
         if (before != null && !before.isEmpty()) {
@@ -149,52 +181,73 @@ public final class FeedApiClient {
         if (fresh) {
             path.append(first ? "?" : "&").append("fresh=1");
         }
-        return getRaw(path.toString()).thenApply(bodyStr -> {
-            try {
-                JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-                List<Comment> list = new ArrayList<>();
-                for (JsonElement el : o.getAsJsonArray("comments")) {
-                    JsonObject c = el.getAsJsonObject();
-                    Comment comment = new Comment();
-                    comment.id = jstr(c, "id");
-                    comment.author = jstr(c, "author");
-                    comment.text = jstr(c, "text");
-                    comment.createdAt = jstr(c, "createdAt");
-                    comment.fromMod = c.has("fromMod") && c.get("fromMod").getAsBoolean();
-                    list.add(comment);
-                }
-                return new CommentsPage(list, jstr(o, "nextBefore"));
-            } catch (Exception e) {
-                return new CommentsPage(List.of(), null);
+        HttpRequest.Builder req = builder(URI.create(base() + path))
+                .timeout(REQUEST_TIMEOUT).GET();
+        if (fresh && before == null && useEtag) {
+            String etag = commentEtags.get(postId);
+            if (etag != null) {
+                req.header("If-None-Match", etag);
             }
-        });
+        }
+        return http.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> {
+                    if (resp.statusCode() == 304) {
+                        return new CommentsPage(null, null, true);
+                    }
+                    resp.headers().firstValue("etag").ifPresent(e -> commentEtags.put(postId, e));
+                    JsonObject o = JsonParser.parseString(checkBody(resp)).getAsJsonObject();
+                    List<Comment> list = GSON.fromJson(o.get("comments"),
+                            new TypeToken<List<Comment>>() {}.getType());
+                    return new CommentsPage(list, FeedUtil.jstr(o, "nextBefore"), false);
+                });
     }
 
     public CompletableFuture<Comment> createComment(String postId, String text) {
-        var user = Minecraft.getInstance().getUser();
-        String body = GSON.toJson(Map.of(
-                "author", user.getName(),
-                "uuid", user.getProfileId().toString(),
-                "text", text));
-        return postRaw("/v1/posts/" + postId + "/comments", body).thenApply(resp -> {
-            JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
-            JsonObject c = o.has("comment") ? o.getAsJsonObject("comment") : o;
-            Comment comment = GSON.fromJson(c, Comment.class);
-            if (comment != null) {
-                comment.fromMod = true;
-            }
-            return comment;
-        });
+        JsonObject body = new JsonObject();
+        body.addProperty("text", text);
+        addPlayerIdentity(body);
+        return postRaw("/v1/posts/" + postId + "/comments", body.toString())
+                .thenApply(resp -> {
+                    JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
+                    JsonObject c = o.has("comment") ? o.getAsJsonObject("comment") : o;
+                    Comment comment = GSON.fromJson(c, Comment.class);
+                    if (comment != null) {
+                        comment.fromMod = true;
+                    }
+                    return comment;
+                });
+    }
+
+    public CompletableFuture<Void> deletePost(String postId) {
+        JsonObject body = new JsonObject();
+        addPlayerIdentity(body);
+        return deleteRaw("/v1/posts/" + postId, body.toString());
+    }
+
+    public CompletableFuture<Void> deleteComment(String postId, String commentId) {
+        JsonObject body = new JsonObject();
+        addPlayerIdentity(body);
+        return deleteRaw("/v1/posts/" + postId + "/comments/" + commentId, body.toString());
+    }
+
+    public CompletableFuture<Void> report(String postId, String commentId, String reason) {
+        JsonObject body = new JsonObject();
+        body.addProperty("postId", postId);
+        if (commentId != null) {
+            body.addProperty("commentId", commentId);
+        }
+        if (reason != null) {
+            body.addProperty("reason", reason);
+        }
+        addPlayerIdentity(body);
+        return postRaw("/v1/report", body.toString()).thenApply(r -> null);
     }
 
     public CompletableFuture<SolveResult> solve(String postId) {
-        String body = GSON.toJson(Map.of(
-                "uuid", Minecraft.getInstance().getUser().getProfileId().toString()));
-        String path = "/v1/posts/" + postId + "/solve";
-        return send(builder(URI.create(base() + path))
-                .timeout(REQUEST_TIMEOUT).POST(HttpRequest.BodyPublishers.ofString(body))
-                .header("Content-Type", "application/json")
-                .build(), SolveResult.class);
+        JsonObject body = new JsonObject();
+        addPlayerIdentity(body);
+        return postRaw("/v1/posts/" + postId + "/solve", body.toString())
+                .thenApply(resp -> GSON.fromJson(resp, SolveResult.class));
     }
 
     public CompletableFuture<Post> fetchPost(String postId) {
@@ -209,18 +262,10 @@ public final class FeedApiClient {
         String path = "/v1/notifications?uuid=" + uuid
                 + (after == null || after.isEmpty() ? "" : "&after=" + after);
         return getRaw(path).thenApply(bodyStr -> {
-            try {
-                JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-                List<Notif> list = new ArrayList<>();
-                for (JsonElement el : o.getAsJsonArray("notifications")) {
-                    JsonObject n = el.getAsJsonObject();
-                    list.add(new Notif(jstr(n, "id"), jstr(n, "postId"), jstr(n, "postText"),
-                            jstr(n, "author"), jstr(n, "text"), jstr(n, "createdAt")));
-                }
-                return new NotificationsResult(list, jstr(o, "latest"));
-            } catch (Exception e) {
-                return null;
-            }
+            JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
+            List<Notif> list = GSON.fromJson(o.get("notifications"),
+                    new TypeToken<List<Notif>>() {}.getType());
+            return new NotificationsResult(list, FeedUtil.jstr(o, "latest"));
         });
     }
 
@@ -230,17 +275,8 @@ public final class FeedApiClient {
             path += "?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8);
         }
         return getRaw(path).thenApply(bodyStr -> {
-            try {
-                JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-                List<TagCount> list = new ArrayList<>();
-                for (JsonElement el : o.getAsJsonArray("tags")) {
-                    JsonObject t = el.getAsJsonObject();
-                    list.add(new TagCount(jstr(t, "tag"), t.get("count").getAsInt()));
-                }
-                return list;
-            } catch (Exception e) {
-                return List.of();
-            }
+            JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
+            return GSON.fromJson(o.get("tags"), new TypeToken<List<TagCount>>() {}.getType());
         });
     }
 
@@ -259,29 +295,28 @@ public final class FeedApiClient {
                 HttpResponse.BodyHandlers.ofString()).thenApply(this::checkBody);
     }
 
+    private CompletableFuture<Void> deleteRaw(String path, String body) {
+        return http.sendAsync(builder(URI.create(base() + path))
+                        .timeout(REQUEST_TIMEOUT)
+                        .header("Content-Type", "application/json")
+                        .method("DELETE", HttpRequest.BodyPublishers.ofString(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString())
+                .thenApply(resp -> {
+                    checkBody(resp);
+                    return null;
+                });
+    }
+
     private static HttpRequest.Builder builder(URI uri) {
         return HttpRequest.newBuilder(uri).header("X-Feed-Token", token());
     }
 
-    /** Unwraps CompletionException to FeedApiException when present. */
     public static FeedApiException unwrap(Throwable ex) {
         while (ex.getCause() != null && !(ex instanceof FeedApiException)) {
             ex = ex.getCause();
         }
         return ex instanceof FeedApiException fae ? fae : new FeedApiException(ex);
-    }
-
-    private <T> CompletableFuture<T> send(HttpRequest request, Class<T> type) {
-        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(resp -> {
-                    String body = checkBody(resp);
-                    T parsed = GSON.fromJson(body, type);
-                    if (parsed == null) {
-                        throw new CompletionException(
-                                new FeedApiException(resp.statusCode(), "empty response body"));
-                    }
-                    return parsed;
-                });
     }
 
     private String checkBody(HttpResponse<String> resp) {
@@ -293,10 +328,6 @@ public final class FeedApiClient {
         return resp.body();
     }
 
-    private static String jstr(JsonObject o, String k) {
-        return o.has(k) && !o.get(k).isJsonNull() ? o.get(k).getAsString() : null;
-    }
-
     private static String base() {
         return PROXY_BASE;
     }
@@ -306,16 +337,12 @@ public final class FeedApiClient {
             return "";
         }
         try {
-            Map<?, ?> map = GSON.fromJson(body, Map.class);
-            if (map != null) {
-                if (map.get("detail") instanceof String d && !d.isBlank()) {
-                    return d.length() > 160 ? d.substring(0, 160) : d;
-                }
-                if (map.get("error") instanceof String s) {
-                    return s;
-                }
+            JsonObject map = JsonParser.parseString(body).getAsJsonObject();
+            if (map.has("error") && !map.get("error").isJsonNull()) {
+                return map.get("error").getAsString();
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Feed.LOG.debug("error parse failed", e);
         }
         return body.length() > 200 ? body.substring(0, 200) : body;
     }

@@ -58,6 +58,17 @@
   "feed.configuration.showInventoryButton": "Show inventory button",
   "feed.configuration.inventoryButtonOffsetX": "Inventory button offset X",
   "feed.configuration.inventoryButtonOffsetY": "Inventory button offset Y",
+  "feed.screen.feed.new_above": "NEW POSTS \u2191 %d",
+  "feed.screen.post.delete": "DEL",
+  "feed.screen.post.report": "REPORT",
+  "feed.screen.post.reported": "Report sent",
+  "feed.configuration.features": "Features",
+  "feed.configuration.enableDeathHook": "Death post prompt",
+  "feed.configuration.enableToastNotifications": "Reply toasts",
+  "feed.configuration.enableAdvancementGg": "GG on advancement",
+  "feed.screen.error.auth": "Auth failed — relog and retry",
+  "feed.screen.error.auth_offline": "Microsoft login required for MineFeed",
+  "feed.screen.error.dev_auth": "Dev auth off on worker — set DEV_AUTH=1 and redeploy",
   "key.feed.open": "Open MineFeed",
   "key.categories.feed": "MineFeed"
 }

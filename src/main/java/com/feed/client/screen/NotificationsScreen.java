@@ -1,10 +1,10 @@
 package com.feed.client.screen;
 
 import com.feed.client.FeedApiClient;
+import com.feed.client.FeedUtil;
 import com.feed.client.NotificationPoller;
 import com.feed.client.PostOpener;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
@@ -12,7 +12,7 @@ import net.neoforged.api.distmarker.OnlyIn;
 import java.util.List;
 
 @OnlyIn(Dist.CLIENT)
-public class NotificationsScreen extends Screen {
+public class NotificationsScreen extends RetroScreen {
 
     private static final int PAD = 8;
     private static final int ROW_H = 36;
@@ -32,6 +32,7 @@ public class NotificationsScreen extends Screen {
         addRenderableWidget(new RetroButton(8, 6, 56, 18,
                 Component.translatable("feed.screen.post.back"), b -> onClose()));
         items = NotificationPoller.unreadList();
+        NotificationPoller.markAllSeen();
         scroll = 0;
     }
 
@@ -64,9 +65,11 @@ public class NotificationsScreen extends Screen {
                         && mouseY >= Math.max(y, TOP) && mouseY < Math.min(y + ROW_H, bottom);
                 RetroUi.drawBox(g, cx, y, cw, ROW_H, hover);
                 String thread = "\u2192 " + safe(RetroUi.flatten(n.postText()));
-                g.drawString(this.font, clip(thread, cw - PAD * 2), cx + PAD, y + 5, RetroUi.ACCENT, false);
+                g.drawString(this.font, FeedUtil.clip(this.font, thread, cw - PAD * 2),
+                        cx + PAD, y + 5, RetroUi.ACCENT, false);
                 String line = safe(RetroUi.flatten(n.author())) + ": " + safe(RetroUi.flatten(n.text()));
-                g.drawString(this.font, clip(line, cw - PAD * 2), cx + PAD, y + 18, RetroUi.FG, false);
+                g.drawString(this.font, FeedUtil.clip(this.font, line, cw - PAD * 2),
+                        cx + PAD, y + 18, RetroUi.FG, false);
             }
             y += ROW_H + 6;
         }
@@ -109,28 +112,8 @@ public class NotificationsScreen extends Screen {
         return s == null || s.isEmpty() ? "?" : s;
     }
 
-    private String clip(String s, int maxW) {
-        if (this.font.width(s) <= maxW) {
-            return s;
-        }
-        return this.font.plainSubstrByWidth(s, maxW - this.font.width("...")) + "...";
-    }
-
-    private int contentWidth() {
-        return Math.min(360, this.width - 24);
-    }
-
-    private int contentLeft() {
-        return (this.width - contentWidth()) / 2;
-    }
-
     @Override
     public void onClose() {
         this.minecraft.setScreen(parent);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
     }
 }

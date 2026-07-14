@@ -4,11 +4,11 @@ import com.feed.client.AvatarCache;
 import com.feed.client.FeedApiClient;
 import com.feed.client.FeedTime;
 import com.feed.client.NotificationPoller;
+import com.feed.client.ReactionHelper;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
@@ -26,10 +26,9 @@ import java.util.Objects;
  * Main feed screen: type tabs, tag search, reaction chips.
  */
 @OnlyIn(Dist.CLIENT)
-public class FeedScreen extends Screen {
+public class FeedScreen extends RetroScreen {
 
     private static final int PAGE_SIZE = 20;
-    private static final int MAX_CONTENT_W = 360;
     private static final int HEADER_H = 64;
     private static final int TABS_Y = 36;
     private static final int TAB_GAP = 6;
@@ -48,7 +47,7 @@ public class FeedScreen extends Screen {
     private static final int NEW_BTN_H = 18;
     private static final int SEARCH_BTN_W = 20;
     private static final int SEARCH_BTN_H = 14;
-    private static final long LIVE_POLL_MS = 12_000L;
+    private static final long LIVE_POLL_MS = 60_000L;
 
     private final List<Post> posts = new ArrayList<>();
     private final List<Row> rows = new ArrayList<>();
@@ -69,6 +68,7 @@ public class FeedScreen extends Screen {
     private List<FeedApiClient.TagCount> suggestions = new ArrayList<>();
     private String lastSentQuery = null;
     private long lastTypedAt = 0L;
+    private int pendingNewAbove = 0;
 
     private record Row(Post post, List<String> lines, int y, int height) {}
 
@@ -137,6 +137,7 @@ public class FeedScreen extends Screen {
         posts.clear();
         nextCursor = null;
         scroll = 0;
+        pendingNewAbove = 0;
         lastLivePoll = System.currentTimeMillis();
         relayout();
         requestPage(null);
@@ -145,14 +146,18 @@ public class FeedScreen extends Screen {
     private void requestPage(String cursor) {
         loading = true;
         error = null;
-        FeedApiClient.INSTANCE.fetchFeed(cursor, PAGE_SIZE, tagFilter, mineOnly, false).whenComplete((resp, ex) ->
-                this.minecraft.execute(() -> {
+        FeedApiClient.INSTANCE.fetchFeed(cursor, PAGE_SIZE, tagFilter, mineOnly, false)
+                .whenComplete((page, ex) -> this.minecraft.execute(() -> {
                     loading = false;
                     lastLivePoll = System.currentTimeMillis();
                     if (ex != null) {
                         error = FeedApiClient.unwrap(ex).userMessage();
                         return;
                     }
+                    if (page.notModified() || page.body() == null) {
+                        return;
+                    }
+                    var resp = page.body();
                     if (resp.posts != null) {
                         posts.addAll(resp.posts);
                     }
@@ -163,13 +168,16 @@ public class FeedScreen extends Screen {
 
     private void pollLiveFeed() {
         livePolling = true;
-        FeedApiClient.INSTANCE.fetchFeed(null, PAGE_SIZE, tagFilter, mineOnly, true).whenComplete((resp, ex) ->
-                this.minecraft.execute(() -> {
+        FeedApiClient.INSTANCE.fetchFeed(null, PAGE_SIZE, tagFilter, mineOnly, true)
+                .whenComplete((page, ex) -> this.minecraft.execute(() -> {
                     livePolling = false;
-                    if (ex != null || resp == null || resp.posts == null) {
+                    if (ex != null || page == null || page.notModified()) {
                         return;
                     }
-                    mergeLiveFeed(resp.posts);
+                    if (page.body() == null || page.body().posts == null) {
+                        return;
+                    }
+                    mergeLiveFeed(page.body().posts);
                 }));
     }
 
@@ -214,6 +222,9 @@ public class FeedScreen extends Screen {
         boolean atTop = scroll <= SCROLL_STEP;
         int oldScroll = scroll;
         posts.addAll(0, brandNew);
+        if (!atTop) {
+            pendingNewAbove += brandNew.size();
+        }
         relayout();
         if (!atTop) {
             int bump = 0;
@@ -234,7 +245,7 @@ public class FeedScreen extends Screen {
             if (filter != null && post.postType() != filter) {
                 continue;
             }
-            List<String> lines = wrap(post.text != null ? post.text : "", textW);
+            List<String> lines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
             int lineStep = this.font.lineHeight + 3;
             int h = PAD + 16 + 6 + lines.size() * lineStep
                     + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
@@ -328,6 +339,19 @@ public class FeedScreen extends Screen {
         g.enableScissor(0, top, this.width, bottom);
 
         drawStats(g, contentLeft(), top - scroll);
+
+        if (pendingNewAbove > 0) {
+            String label = Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
+            int lw = this.font.width(label);
+            int lx = this.width / 2 - lw / 2;
+            int ny = top + STATS_BLOCK - scroll - 14;
+            boolean hover = mouseX >= lx - 4 && mouseX <= lx + lw + 4
+                    && mouseY >= ny - 2 && mouseY <= ny + 10;
+            if (hover) {
+                g.fill(lx - 4, ny - 2, lx + lw + 4, ny + 10, RetroUi.HOVER_BG);
+            }
+            g.drawString(this.font, label, lx, ny, hover ? RetroUi.ACCENT : RetroUi.FG, false);
+        }
 
         for (Row row : rows) {
             int y = top + row.y() - scroll;
@@ -460,6 +484,9 @@ public class FeedScreen extends Screen {
             return true;
         }
         scroll -= (int) (dy * SCROLL_STEP);
+        if (scroll <= SCROLL_STEP) {
+            pendingNewAbove = 0;
+        }
         clampScroll();
         int viewport = this.height - 8 - listTop();
         if (!loading && nextCursor != null
@@ -545,6 +572,20 @@ public class FeedScreen extends Screen {
         }
 
         int top = listTop();
+        if (pendingNewAbove > 0 && mouseY >= top && mouseY < top + STATS_BLOCK) {
+            String label = Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
+            int lw = this.font.width(label);
+            int lx = this.width / 2 - lw / 2;
+            int ny = top + STATS_BLOCK - scroll - 14;
+            if (mouseX >= lx - 4 && mouseX <= lx + lw + 4
+                    && mouseY >= ny - 2 && mouseY <= ny + 10) {
+                scroll = 0;
+                pendingNewAbove = 0;
+                clampScroll();
+                return true;
+            }
+        }
+
         if (mouseY >= top && mouseY < this.height - 8) {
             for (Row row : rows) {
                 int y = top + row.y() - scroll;
@@ -608,7 +649,7 @@ public class FeedScreen extends Screen {
                 int count = post.reactionCount(key);
                 int w = RetroUi.reactionChipWidth(this.font, EmojiIcon.byKey(key), String.valueOf(count));
                 if (mouseX >= rx && mouseX < rx + w) {
-                    toggleReaction(post, key);
+                    ReactionHelper.toggle(post, key, null);
                     return true;
                 }
                 rx += w + TAB_GAP;
@@ -633,36 +674,6 @@ public class FeedScreen extends Screen {
         }
         this.minecraft.setScreen(new PostScreen(this, post));
         return true;
-    }
-
-    private void toggleReaction(Post post, String key) {
-        String myUuid = this.minecraft.getUser().getProfileId().toString();
-        FeedApiClient.INSTANCE.toggleReaction(post.id, myUuid, key).whenComplete((r, ex) ->
-                this.minecraft.execute(() -> {
-                    if (ex != null || r == null) {
-                        return;
-                    }
-                    post.reactions.putAll(r.counts());
-                    post.myReaction = r.active();
-                }));
-    }
-
-    private List<String> wrap(String text, int width) {
-        List<String> lines = new ArrayList<>();
-        for (String raw : text.split("\n")) {
-            StringBuilder line = new StringBuilder();
-            for (String word : raw.split(" ")) {
-                String candidate = line.isEmpty() ? word : line + " " + word;
-                if (this.font.width(candidate) > width && !line.isEmpty()) {
-                    lines.add(line.toString());
-                    line = new StringBuilder(word);
-                } else {
-                    line = new StringBuilder(candidate);
-                }
-            }
-            lines.add(line.toString());
-        }
-        return lines;
     }
 
     private static String displayAuthor(Post post) {
@@ -690,14 +701,6 @@ public class FeedScreen extends Screen {
         return HEADER_H + extra;
     }
 
-    private int contentWidth() {
-        return Math.min(MAX_CONTENT_W, this.width - 24);
-    }
-
-    private int contentLeft() {
-        return (this.width - contentWidth()) / 2;
-    }
-
     private int hdrNewX() {
         return this.width - HDR_RIGHT - NEW_BTN_W;
     }
@@ -708,10 +711,5 @@ public class FeedScreen extends Screen {
 
     private int hdrNotifX(String label) {
         return hdrSearchX() - HDR_GAP - RetroUi.chipWidth(this.font, label);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
     }
 }

@@ -1,31 +1,41 @@
 # MineFeed
 
-Global Minecraft feed for NeoForge 1.21.1 — one timeline for every player: posts, comments, reactions, tags, notifications.
-**Client-only** — no server-side mod required.
+**A social feed inside Minecraft.** One global timeline shared by every player with the mod — post, comment, react and get replies without leaving the game.
+
+**Client-only** — drop the jar into `mods/` and that's it. No server-side mod, no account, no setup. Works on any server and in singleplayer; you post under your Minecraft nickname and skin.
+
+## Why
+
+Minecraft moments usually die in screenshots nobody sees. MineFeed gives them a place: died a stupid death? Post it. Stuck on a build or a farm? Ask for help. Finally beat the dragon? Brag. Everyone running the mod sees it — across servers and worlds.
+
+## What's inside
+
+- **4 kinds of posts**: `[~]` talk, `[?]` help (can be marked solved), `[GG]` achievements, `[F]` deaths
+- **Comments** under every post
+- **Reactions** — each post type has its own pair, one per player, toggleable
+- **#tags** — tag your posts, browse tag feeds, autocomplete while typing
+- **Reply notifications** — on-screen toast when someone answers your post; click it to jump into the thread
+- **Death posts** — one click after respawn to share your death message
+- **GG on advancement** — optional auto-compose when you earn an advancement
+- Retro-styled UI with real player avatars
 
 ## How to open
 
 - Key **J** (Controls → MineFeed)
-- **MF** button left of the inventory (can be disabled in mod settings)
+- **MF** button next to the inventory (can be disabled in settings)
 
-## Build
+## Install
 
-```powershell
-.\gradlew build          # jar in build/libs/
-.\gradlew runClient      # dev client
-```
+1. NeoForge 1.21.1
+2. Drop the jar into `mods/`
+3. Done
 
-## For players
+Settings: Mods → MineFeed → Config (inventory button and offsets, death-post prompt, toast notifications, GG-compose).
 
-1. Drop the jar into `mods/`
-2. NeoForge 1.21.1
-3. Done — backend URL is baked into the mod
+## Build from source
 
-Settings (Mods → MineFeed → Config): inventory button and offsets.
-
-## Backend
-
-See [proxy/README.md](proxy/README.md).
+    .\gradlew build          # jar in build/libs/
+    .\gradlew runClient      # dev client
 
 ## License
 

@@ -20,23 +20,34 @@ import net.neoforged.neoforge.client.event.ScreenEvent;
 @EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class DeathHook {
 
-    private static final boolean ENABLED = true;
-
     private static String pending;
 
     private DeathHook() {
     }
 
+    private static String deathMessage(DeathScreen screen, Minecraft mc) {
+        try {
+            var f = DeathScreen.class.getDeclaredField("causeOfDeath");
+            f.setAccessible(true);
+            Component cause = (Component) f.get(screen);
+            if (cause != null) {
+                return cause.getString();
+            }
+        } catch (Exception ignored) {
+        }
+        return mc.player.getCombatTracker().getDeathMessage().getString();
+    }
+
     @SubscribeEvent
     public static void onScreenInit(ScreenEvent.Init.Post event) {
-        if (!ENABLED || !(event.getScreen() instanceof DeathScreen screen)) {
+        if (!FeedConfig.deathHookEnabled() || !(event.getScreen() instanceof DeathScreen screen)) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) {
             return;
         }
-        String message = mc.player.getCombatTracker().getDeathMessage().getString();
+        String message = deathMessage(screen, mc);
         event.addListener(new RetroButton(screen.width / 2 - 100, screen.height / 4 + 120, 200, 18,
                 Component.translatable("feed.screen.death.post"), b -> {
             pending = message;

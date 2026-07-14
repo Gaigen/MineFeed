@@ -35,6 +35,9 @@ public class FeedApiException extends Exception {
             return Component.translatable("feed.screen.error.network");
         }
         String msg = getMessage();
+        if ("auth_failed".equals(msg) || "unauthorized".equals(msg)) {
+            return Component.translatable("feed.screen.error.auth");
+        }
         return msg == null || msg.isBlank()
                 ? Component.translatable("feed.screen.error.unknown")
                 : Component.literal(msg);

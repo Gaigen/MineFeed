@@ -79,4 +79,25 @@ public final class RetroUi {
         }
         g.drawString(font, text, x + font.width("_ "), y, color, false);
     }
+
+    public static java.util.List<String> wrap(Font font, String text, int width) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (text == null) {
+            return lines;
+        }
+        for (String raw : text.split("\n")) {
+            StringBuilder line = new StringBuilder();
+            for (String word : raw.split(" ")) {
+                String candidate = line.isEmpty() ? word : line + " " + word;
+                if (font.width(candidate) > width && !line.isEmpty()) {
+                    lines.add(line.toString());
+                    line = new StringBuilder(word);
+                } else {
+                    line = new StringBuilder(candidate);
+                }
+            }
+            lines.add(line.toString());
+        }
+        return lines;
+    }
 }

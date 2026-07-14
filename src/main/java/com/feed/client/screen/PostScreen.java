@@ -4,13 +4,13 @@ import com.feed.client.AvatarCache;
 import com.feed.client.FeedApiClient;
 import com.feed.client.FeedTime;
 import com.feed.client.NotificationPoller;
+import com.feed.client.ReactionHelper;
 import com.feed.data.Comment;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
@@ -24,9 +24,8 @@ import java.util.Set;
 
 /** Single post with comment thread and reply box. */
 @OnlyIn(Dist.CLIENT)
-public class PostScreen extends Screen {
+public class PostScreen extends RetroScreen {
 
-    private static final int MAX_CONTENT_W = 360;
     private static final int TOP = 30;
     private static final int PAD = 8;
     private static final int CARD_GAP = 10;
@@ -34,7 +33,7 @@ public class PostScreen extends Screen {
     private static final int SCROLL_STEP = 18;
     private static final int MAX_COMMENT = 300;
     private static final int LOAD_OLDER_H = 14;
-    private static final long LIVE_POLL_MS = 8_000L;
+    private static final long LIVE_POLL_MS = 30_000L;
 
     private final FeedScreen parent;
     private final Post post;
@@ -58,6 +57,8 @@ public class PostScreen extends Screen {
     private EditBox input;
     private RetroButton sendButton;
     private RetroButton solveButton;
+    private RetroButton deleteButton;
+    private RetroButton reportButton;
 
     private int scroll;
     private int contentHeight;
@@ -80,6 +81,14 @@ public class PostScreen extends Screen {
         if (post.postType() == PostType.HELP && isOwn() && !post.solved) {
             solveButton = addRenderableWidget(new RetroButton(this.width - 110, 6, 102, 18,
                     Component.translatable("feed.screen.post.solve"), b -> solve()));
+        }
+
+        if (isOwn()) {
+            deleteButton = addRenderableWidget(new RetroButton(this.width - 168, 6, 52, 18,
+                    Component.translatable("feed.screen.post.delete"), b -> deletePost()));
+        } else {
+            reportButton = addRenderableWidget(new RetroButton(this.width - 184, 6, 68, 18,
+                    Component.translatable("feed.screen.post.report"), b -> reportPost()));
         }
 
         int x = contentLeft();
@@ -154,10 +163,13 @@ public class PostScreen extends Screen {
 
     private void pollLiveComments() {
         livePolling = true;
-        FeedApiClient.INSTANCE.fetchComments(post.id, null, true).whenComplete((page, ex) ->
+        FeedApiClient.INSTANCE.fetchCommentsIfCached(post.id).whenComplete((page, ex) ->
                 this.minecraft.execute(() -> {
                     livePolling = false;
-                    if (ex != null || page == null || page.comments() == null) {
+                    if (ex != null || page == null || page.notModified()) {
+                        return;
+                    }
+                    if (page.comments() == null) {
                         return;
                     }
                     mergeNewComments(page.comments());
@@ -259,10 +271,44 @@ public class PostScreen extends Screen {
                 }));
     }
 
+    private void deletePost() {
+        if (deleteButton != null) {
+            deleteButton.active = false;
+        }
+        FeedApiClient.INSTANCE.deletePost(post.id).whenComplete((v, ex) ->
+                this.minecraft.execute(() -> {
+                    if (ex != null) {
+                        if (deleteButton != null) {
+                            deleteButton.active = true;
+                        }
+                        error = FeedApiClient.unwrap(ex).userMessage();
+                        return;
+                    }
+                    onClose();
+                }));
+    }
+
+    private void reportPost() {
+        if (reportButton != null) {
+            reportButton.active = false;
+        }
+        FeedApiClient.INSTANCE.report(post.id, null, null).whenComplete((v, ex) ->
+                this.minecraft.execute(() -> {
+                    if (reportButton != null) {
+                        reportButton.active = true;
+                    }
+                    if (ex != null) {
+                        error = FeedApiClient.unwrap(ex).userMessage();
+                    } else {
+                        error = Component.translatable("feed.screen.post.reported");
+                    }
+                }));
+    }
+
     private void relayout() {
         int textW = contentWidth() - PAD * 2;
         int headerH = Math.max(AvatarCache.BODY_H, 16);
-        postLines = wrap(post.text != null ? post.text : "", textW);
+        postLines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
         int lineStep = this.font.lineHeight + 3;
         postHeight = PAD + headerH + 6 + postLines.size() * lineStep
                 + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
@@ -273,7 +319,7 @@ public class PostScreen extends Screen {
             y += LOAD_OLDER_H;
         }
         for (Comment c : comments) {
-            List<String> lines = wrap(c.text != null ? c.text : "", textW - 8);
+            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
             int h = 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4;
             rows.add(new Row(c, lines, y, h));
             y += h + 6;
@@ -286,7 +332,7 @@ public class PostScreen extends Screen {
         int textW = contentWidth() - PAD * 2;
         int h = 0;
         for (Comment c : list) {
-            List<String> lines = wrap(c.text != null ? c.text : "", textW - 8);
+            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
             h += 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4 + 6;
         }
         return h;
@@ -468,7 +514,7 @@ public class PostScreen extends Screen {
                 int count = post.reactionCount(key);
                 int w = RetroUi.reactionChipWidth(this.font, EmojiIcon.byKey(key), String.valueOf(count));
                 if (mouseX >= rx && mouseX < rx + w) {
-                    toggleReaction(key);
+                    ReactionHelper.toggle(post, key, null);
                     return true;
                 }
                 rx += w + 6;
@@ -517,36 +563,6 @@ public class PostScreen extends Screen {
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
-    private void toggleReaction(String key) {
-        String myUuid = this.minecraft.getUser().getProfileId().toString();
-        FeedApiClient.INSTANCE.toggleReaction(post.id, myUuid, key).whenComplete((r, ex) ->
-                this.minecraft.execute(() -> {
-                    if (ex != null || r == null) {
-                        return;
-                    }
-                    post.reactions.putAll(r.counts());
-                    post.myReaction = r.active();
-                }));
-    }
-
-    private List<String> wrap(String text, int width) {
-        List<String> lines = new ArrayList<>();
-        for (String raw : text.split("\n")) {
-            StringBuilder line = new StringBuilder();
-            for (String word : raw.split(" ")) {
-                String candidate = line.isEmpty() ? word : line + " " + word;
-                if (this.font.width(candidate) > width && !line.isEmpty()) {
-                    lines.add(line.toString());
-                    line = new StringBuilder(word);
-                } else {
-                    line = new StringBuilder(candidate);
-                }
-            }
-            lines.add(line.toString());
-        }
-        return lines;
-    }
-
     private String displayAuthor() {
         return post.author == null || post.author.isEmpty() ? "?" : post.author;
     }
@@ -554,14 +570,6 @@ public class PostScreen extends Screen {
     private void clampScroll() {
         int viewport = listBottom() - TOP;
         scroll = Math.max(0, Math.min(scroll, Math.max(0, contentHeight - viewport)));
-    }
-
-    private int contentWidth() {
-        return Math.min(MAX_CONTENT_W, this.width - 24);
-    }
-
-    private int contentLeft() {
-        return (this.width - contentWidth()) / 2;
     }
 
     private int inputTop() {
@@ -579,10 +587,5 @@ public class PostScreen extends Screen {
     @Override
     public void onClose() {
         this.minecraft.setScreen(parent);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
     }
 }
