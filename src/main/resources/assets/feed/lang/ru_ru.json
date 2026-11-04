@@ -198,5 +198,6 @@
   "feed.account.discord.err.denied": "Доступ в Discord не разрешён",
   "feed.account.discord.err.expired": "Время вышло, попробуй ещё раз",
   "feed.account.discord.err.failed": "Discord не ответил, попробуй ещё раз",
-  "feed.account.discord.err.off": "Discord сейчас недоступен"
+  "feed.account.discord.err.off": "Discord сейчас недоступен",
+  "feed.account.discord.server": "НАШ DISCORD"
 }

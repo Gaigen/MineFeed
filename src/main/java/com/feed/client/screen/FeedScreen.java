@@ -37,6 +37,7 @@ public class FeedScreen extends RetroScreen {
     private static final int TABS_Y = 36;
     private static final int TAB_GAP = 6;
     private static final int PAD = 8;
+    private static final String DISCORD_LABEL = "DISCORD";
     private static final int CARD_GAP = 10;
     private static final int SCROLL_STEP = 18;
     private static final int LOAD_MORE_THRESHOLD = 40;
@@ -100,6 +101,13 @@ public class FeedScreen extends RetroScreen {
         UpdateChecker.checkOnce();
         addRenderableWidget(new RetroButton(PAD, HDR_Y, profileButtonWidth(), SEARCH_BTN_H,
                 Component.literal(profileLabel()), b -> this.minecraft.setScreen(new ProfileScreen(this))));
+        int dcX = PAD + profileButtonWidth() + 4;
+        int dcW = this.font.width(DISCORD_LABEL) + 10;
+        int titleLeft = (this.width - this.font.width(this.title.getString() + "_")) / 2;
+        if (dcX + dcW < titleLeft - 4) { // only when it doesn't collide with the title
+            addRenderableWidget(new RetroButton(dcX, HDR_Y, dcW, SEARCH_BTN_H, Component.literal(DISCORD_LABEL),
+                    b -> net.minecraft.Util.getPlatform().openUri(UpdateChecker.discordUrl())));
+        }
 
         searchBox = new EditBox(this.font, contentLeft() + 2, TABS_Y + 20,
                 contentWidth() - 4, 12, Component.translatable("feed.screen.feed.search"));

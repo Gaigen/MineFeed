@@ -42,7 +42,7 @@ public final class AccountApi {
     /** status: pending | done | error. For kind=login a new {@code key} comes with done. */
     public record DiscordPoll(String status, String kind, String code, String error, Account account, String key) {}
 
-    public record Meta(int api, String minClient, String latestClient, String downloadUrl) {}
+    public record Meta(int api, String minClient, String latestClient, String downloadUrl, String discordUrl) {}
 
     private final HttpClient http;
     private final String base;

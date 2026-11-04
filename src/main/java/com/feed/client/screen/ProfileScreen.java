@@ -118,7 +118,11 @@ public class ProfileScreen extends AccountPanelScreen {
         addRenderableWidget(new RetroButton(innerX() + (bw + GAP) * 2, y, innerW() - (bw + GAP) * 2, BTN_H,
                 Component.translatable("feed.account.profile.logout"), b -> confirmLogout()));
         y += BTN_H + 6;
-        addRenderableWidget(new RetroButton(innerX(), y, innerW(), BTN_H,
+        int half = buttonsRowWidth(2, GAP);
+        addRenderableWidget(new RetroButton(innerX(), y, half, BTN_H,
+                Component.translatable("feed.account.discord.server"),
+                b -> net.minecraft.Util.getPlatform().openUri(com.feed.client.account.UpdateChecker.discordUrl())));
+        addRenderableWidget(new RetroButton(innerX() + half + GAP, y, innerW() - half - GAP, BTN_H,
                 Component.translatable("feed.account.back"), b -> onClose()));
         updateButtons();
 

@@ -198,5 +198,6 @@
   "feed.account.discord.err.denied": "Discord access was not allowed",
   "feed.account.discord.err.expired": "Time is up, try again",
   "feed.account.discord.err.failed": "Discord didn't respond, try again",
-  "feed.account.discord.err.off": "Discord is unavailable right now"
+  "feed.account.discord.err.off": "Discord is unavailable right now",
+  "feed.account.discord.server": "OUR DISCORD"
 }

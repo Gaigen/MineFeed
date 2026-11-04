@@ -12,6 +12,9 @@ public final class UpdateChecker {
     private static volatile State state = State.UNKNOWN;
     private static volatile String latest;
     private static volatile String downloadUrl;
+    /** Fallback when /v2/meta is unreachable; the server value wins so the invite can change without an update. */
+    public static final String DEFAULT_DISCORD = "https:" + "//discord.gg/FzZBQ43ujk";
+    private static volatile String discordUrl;
     private static volatile boolean started;
     private static volatile boolean toastShown;
 
@@ -30,6 +33,11 @@ public final class UpdateChecker {
         return downloadUrl;
     }
 
+    public static String discordUrl() {
+        String u = discordUrl;
+        return u != null && u.startsWith("https://") ? u : DEFAULT_DISCORD;
+    }
+
     public static void checkOnce() {
         if (started) {
             return;
@@ -43,6 +51,7 @@ public final class UpdateChecker {
             String current = AccountManager.clientVersion();
             latest = m.latestClient();
             downloadUrl = m.downloadUrl();
+            discordUrl = m.discordUrl();
             if (m.minClient() != null && Versions.compare(current, m.minClient()) < 0) {
                 state = State.OUTDATED;
             } else if (m.latestClient() != null && Versions.compare(current, m.latestClient()) < 0) {

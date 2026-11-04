@@ -29,6 +29,7 @@ export async function route(request, env, now) {
       minClient: env.MIN_CLIENT || "0.2.0",
       latestClient: env.LATEST_CLIENT || env.MIN_CLIENT || "0.2.0",
       downloadUrl: env.DOWNLOAD_URL || null,
+      discordUrl: env.DISCORD_INVITE || null,
     }, 200, { "cache-control": "public, max-age=300" });
   }
   if (p === "/v2/tags/check" && m === "GET") {
