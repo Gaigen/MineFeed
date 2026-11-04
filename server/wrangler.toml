@@ -1,0 +1,19 @@
+# MineFeed API v2 — TEST environment. Production config will be added separately.
+name = "minefeed-dev"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+preview_urls = false
+
+[vars]
+MIN_CLIENT = "0.2.0"
+LATEST_CLIENT = "0.2.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "minefeed-dev-db"
+database_id = "5b0b275e-3a2a-4d4a-9815-84914d2d6ff3"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
