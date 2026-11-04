@@ -13,6 +13,10 @@ changes are delayed (the queue is retried with backoff).
 
 ## Install (Debian/Ubuntu, systemd)
 
+Current VPS (Ubuntu 24.04): `apt install nodejs` (18.19 from Ubuntu, security updates via apt),
+`node_modules` copied as is (pure JS, no build step). Updating = copy files to /opt/minefeed-bot +
+`sudo systemctl restart minefeed-bot`.
+
 ```sh
 # Node 18+ (20 LTS recommended)
 sudo useradd --system --home /opt/minefeed-bot --shell /usr/sbin/nologin minefeed
