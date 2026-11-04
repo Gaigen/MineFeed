@@ -25,6 +25,8 @@ public class ProfileScreen extends AccountPanelScreen {
     private EditBox tag;
     private RetroButton saveNick;
     private RetroButton changeTag;
+    private RetroButton discordButton;
+    private boolean lostTagHandled;
     private boolean refreshed;
     private String note;
     private int infoY;
@@ -67,10 +69,13 @@ public class ProfileScreen extends AccountPanelScreen {
         int w = panelWidth() - PAD * 2;
         note = Component.translatable("feed.account.tag.rules").getString();
         int noteH = AccountUi.wrappedHeight(this.font, note, w);
-        int y = layoutPanel(3 * LINE + 6 + LINE + AccountUi.FIELD_H + 6 + LINE + AccountUi.FIELD_H + 3 + LINE
+        int y = layoutPanel(3 * LINE + 8 + LINE + AccountUi.FIELD_H + 6 + LINE + AccountUi.FIELD_H + 3 + LINE
                 + noteH + 4 + LINE + 4 + BTN_H + 6 + BTN_H);
         infoY = y;
-        y += 3 * LINE + 6;
+        discordButton = addRenderableWidget(new RetroButton(innerX() + innerW() - SIDE_BTN_W, infoY + 2 * LINE - 3,
+                SIDE_BTN_W, 14, Component.translatable(a.discordLinked() ? "feed.account.discord.unlink" : "feed.account.discord.link"),
+                b -> discordAction()));
+        y += 3 * LINE + 8;
 
         int fieldW = innerW() - SIDE_BTN_W - GAP;
         nickLabelY = y;
@@ -93,7 +98,7 @@ public class ProfileScreen extends AccountPanelScreen {
         });
         tag.setValue(tagValue);
         checker.onChanged(tagValue);
-        tag.setEditable(!onCooldown());
+        tag.setEditable(!onCooldown() || a.claimableTag() != null);
         changeTag = addRenderableWidget(new RetroButton(innerX() + fieldW + GAP, y - 1, SIDE_BTN_W, AccountUi.FIELD_H + 2,
                 Component.translatable("feed.account.profile.change"), b -> confirmTag()));
         y += AccountUi.FIELD_H + 3;
@@ -117,6 +122,13 @@ public class ProfileScreen extends AccountPanelScreen {
                 Component.translatable("feed.account.back"), b -> onClose()));
         updateButtons();
 
+        if (a.lostTag() != null && !lostTagHandled) {
+            lostTagHandled = true;
+            setStatus(Component.translatable("feed.account.lost_tag.notice", "@" + a.lostTag()), RetroUi.ACCENT);
+            AccountManager.thenOnMain(AccountManager.INSTANCE.api().ackLostTag(),
+                    AccountManager.INSTANCE::updateAccount, err -> { });
+        }
+
         if (!refreshed) {
             refreshed = true;
             AccountManager.thenOnMain(AccountManager.INSTANCE.api().me(), fresh -> {
@@ -139,8 +151,43 @@ public class ProfileScreen extends AccountPanelScreen {
         AccountApi.Account a = acc();
         String clean = TagRules.cleanNick(nickValue);
         saveNick.active = !busy && a != null && TagRules.validNick(clean) && !clean.equals(a.nick());
-        changeTag.active = !busy && !onCooldown() && checker.state() != TagChecker.State.OWN
-                && checker.submittable();
+        changeTag.active = !busy && checker.state() != TagChecker.State.OWN && checker.submittable()
+                && (!onCooldown() || isClaimValue());
+        discordButton.active = !busy;
+    }
+
+    private boolean isClaimValue() {
+        AccountApi.Account a = acc();
+        return a != null && a.claimableTag() != null && a.claimableTag().equals(checker.value());
+    }
+
+    /** Shown when coming back from another screen (e.g. Discord link). */
+    public void notice(Component text, int color) {
+        setStatus(text, color);
+    }
+
+    private void discordAction() {
+        AccountApi.Account a = acc();
+        if (busy || a == null) {
+            return;
+        }
+        if (!a.discordLinked()) {
+            this.minecraft.setScreen(new DiscordScreen(this, this, false));
+            return;
+        }
+        this.minecraft.setScreen(new RetroConfirmScreen(this,
+                Component.translatable("feed.account.discord.unlink_title"),
+                Component.translatable("feed.account.discord.unlink_confirm"),
+                Component.translatable("feed.account.discord.unlink"), true, () -> {
+            this.minecraft.setScreen(this);
+            busy = true;
+            AccountManager.thenOnMain(AccountManager.INSTANCE.api().discordUnlink(), updated -> {
+                busy = false;
+                AccountManager.INSTANCE.updateAccount(updated);
+                setStatus(Component.translatable("feed.account.discord.unlinked"), AccountUi.GREEN);
+                rebuildWidgets();
+            }, this::fail);
+        }));
     }
 
     private void saveNick() {
@@ -162,13 +209,15 @@ public class ProfileScreen extends AccountPanelScreen {
 
     private void confirmTag() {
         AccountApi.Account a = acc();
-        if (busy || a == null || !checker.submittable() || onCooldown()) {
+        boolean claim = checker.isClaim() || isClaimValue();
+        if (busy || a == null || !checker.submittable() || (onCooldown() && !claim)) {
             return;
         }
         String newTag = checker.value();
         this.minecraft.setScreen(new RetroConfirmScreen(this,
                 Component.translatable("feed.account.profile.tag_confirm_title"),
-                Component.translatable("feed.account.profile.tag_confirm", "@" + a.tag(), "@" + newTag),
+                claim ? Component.translatable("feed.account.discord.claim_confirm", "@" + newTag)
+                        : Component.translatable("feed.account.profile.tag_confirm", "@" + a.tag(), "@" + newTag),
                 Component.translatable("feed.account.profile.change"), false, () -> {
             this.minecraft.setScreen(this);
             busy = true;
@@ -269,14 +318,25 @@ public class ProfileScreen extends AccountPanelScreen {
                 x + this.font.width(handle) + 8, infoY, RetroUi.FG, false);
         g.drawString(this.font, Component.translatable("feed.account.profile.since", AccountUi.date(a.createdAt())),
                 x, infoY + LINE, RetroUi.GRAY, false);
-        g.drawString(this.font, Component.translatable(a.discordLinked()
-                        ? (a.tagProtected() ? "feed.account.profile.discord_protected" : "feed.account.profile.discord_linked")
-                        : "feed.account.profile.discord_none"),
-                x, infoY + 2 * LINE, RetroUi.GRAY, false);
+        Component discord;
+        if (!a.discordLinked()) {
+            discord = Component.translatable("feed.account.profile.discord_none");
+        } else if (a.discordUsername() != null) {
+            discord = Component.translatable(a.tagProtected() ? "feed.account.profile.discord_user_protected"
+                    : "feed.account.profile.discord_user", "@" + a.discordUsername());
+        } else {
+            discord = Component.translatable(a.tagProtected() ? "feed.account.profile.discord_protected"
+                    : "feed.account.profile.discord_linked");
+        }
+        g.drawString(this.font, this.font.plainSubstrByWidth(discord.getString(), innerW() - SIDE_BTN_W - 6),
+                x, infoY + 2 * LINE, a.tagProtected() ? AccountUi.GREEN : RetroUi.GRAY, false);
 
         AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.nick.label"), x, nickLabelY);
         AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.tag.label"), x, tagLabelY);
-        if (onCooldown()) {
+        if (onCooldown() && a.claimableTag() != null && !isClaimValue()) {
+            g.drawString(this.font, Component.translatable("feed.account.tag.cooldown_claim", "@" + a.claimableTag()),
+                    x, tagStatusY, RetroUi.GRAY, false);
+        } else if (onCooldown() && a.claimableTag() == null) {
             g.drawString(this.font, Component.translatable("feed.account.tag.cooldown", AccountUi.date(a.canChangeTagAt())),
                     x, tagStatusY, RetroUi.GRAY, false);
         } else {

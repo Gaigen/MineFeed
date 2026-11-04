@@ -117,6 +117,13 @@ public final class AccountManager {
         api.me().whenComplete((acc, ex) -> Minecraft.getInstance().execute(() -> {
             if (ex == null) {
                 updateAccount(acc);
+                if (acc.lostTag() != null) {
+                    net.minecraft.client.gui.components.toasts.SystemToast.addOrUpdate(
+                            Minecraft.getInstance().getToasts(),
+                            net.minecraft.client.gui.components.toasts.SystemToast.SystemToastId.PERIODIC_NOTIFICATION,
+                            net.minecraft.network.chat.Component.translatable("feed.account.lost_tag.toast_title"),
+                            net.minecraft.network.chat.Component.translatable("feed.account.lost_tag.toast", "@" + acc.lostTag()));
+                }
                 return;
             }
             handleError(AccountApi.unwrap(ex));

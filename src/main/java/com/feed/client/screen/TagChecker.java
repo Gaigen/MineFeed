@@ -19,6 +19,7 @@ public final class TagChecker {
     private Component message = Component.empty();
     private long typedAt;
     private int generation;
+    private boolean claim;
 
     public TagChecker(String ownTag) {
         this.ownTag = ownTag;
@@ -27,6 +28,7 @@ public final class TagChecker {
     public void onChanged(String raw) {
         value = TagRules.normalize(raw);
         generation++;
+        claim = false;
         if (value.isEmpty()) {
             set(State.EMPTY, Component.empty());
             return;
@@ -57,8 +59,13 @@ public final class TagChecker {
             }
             if (ex != null) {
                 set(State.ERROR, AccountUi.describe(AccountApi.unwrap(ex)));
+            } else if (r.available() && r.claim()) {
+                claim = true;
+                set(State.FREE, Component.translatable("feed.account.tag.claim", "@" + r.tag()));
             } else if (r.available()) {
                 set(State.FREE, Component.translatable("feed.account.tag.free", "@" + r.tag()));
+            } else if (r.isProtected()) {
+                set(State.TAKEN, Component.translatable("feed.account.tag.protected"));
             } else if (r.reason() != null && !r.reason().isBlank() && !r.reason().contains("занят")) {
                 set(State.TAKEN, Component.literal(r.reason()));
             } else {
@@ -79,6 +86,11 @@ public final class TagChecker {
 
     public State state() {
         return state;
+    }
+
+    /** Server said: free for you because it is your verified Discord handle. */
+    public boolean isClaim() {
+        return claim;
     }
 
     public String value() {

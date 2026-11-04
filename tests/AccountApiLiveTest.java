@@ -29,6 +29,7 @@ public class AccountApiLiveTest {
         String base = args.length > 0 ? args[0] : AccountApi.DEFAULT_BASE;
         AtomicReference<String> key = new AtomicReference<>();
         AccountApi api = new AccountApi(HttpClient.newHttpClient(), base, "0.2.0-test", key::get);
+        AccountApi anon = new AccountApi(HttpClient.newHttpClient(), base, "0.2.0-test", () -> null);
         String tag = "t_" + Long.toString(System.nanoTime(), 36);
 
         AccountApi.Meta meta = api.meta().join();
@@ -41,7 +42,8 @@ public class AccountApiLiveTest {
         check(s.key().startsWith("mfk_") && s.recoveryCode().length() == 24, "register gives key + code");
         check(s.account().tag().equals(tag) && s.account().nick().equals("Тест ник"), "register account fields, nick cleaned");
         System.out.println("     account id=" + s.account().id());
-        check(!api.checkTag(tag).join().available(), "tag taken after register");
+        check(!anon.checkTag(tag).join().available(), "tag taken after register (for others)");
+        check(api.checkTag(tag).join().available(), "own tag not reported as taken to its owner");
 
         ApiError dup = err(() -> api.register(tag, "x").join());
         check(dup != null && "tag_taken".equals(dup.code) && dup.status == 409, "duplicate register -> tag_taken");
@@ -70,7 +72,13 @@ public class AccountApiLiveTest {
         check(changed.tag().equals(tag2) && changed.canChangeTagAt() != null, "change tag sets cooldown");
         ApiError cd = err(() -> api.setTag(tag + ".c").join());
         check(cd != null && "tag_cooldown".equals(cd.code) && cd.longExtra("canChangeTagAt") != null, "second change -> cooldown");
-        check(!api.checkTag(tag).join().available(), "old tag held");
+        check(!anon.checkTag(tag).join().available(), "old tag held for others");
+
+        AccountApi.DiscordFlow fl = api.discordStart(false).join();
+        check(fl.url().contains("/v2/discord/go/") && !fl.url().contains(fl.pollSecret()), "discord link flow started");
+        check("pending".equals(api.discordPoll(fl).join().status()), "discord poll pending");
+        AccountApi.Account dme = api.me().join();
+        check(!dme.discordLinked() && dme.claimableTag() == null && dme.lostTag() == null, "me has discord fields");
 
         String code2 = api.newRecoveryCode().join();
         check(!code2.equals(s.recoveryCode()), "new recovery code differs");

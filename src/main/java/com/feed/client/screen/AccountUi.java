@@ -56,6 +56,21 @@ public final class AccountUi {
             case "bad_auth":
             case "no_auth":
                 return Component.translatable("feed.account.error.session_lost");
+            case "tag_protected":
+                return Component.translatable("feed.account.tag.protected");
+            case "discord_taken":
+                return Component.translatable("feed.account.discord.err.taken");
+            case "not_linked":
+                return Component.translatable("feed.account.discord.err.not_linked");
+            case "denied":
+                return Component.translatable("feed.account.discord.err.denied");
+            case "expired":
+            case "flow_not_found":
+                return Component.translatable("feed.account.discord.err.expired");
+            case "discord_failed":
+                return Component.translatable("feed.account.discord.err.failed");
+            case "discord_off":
+                return Component.translatable("feed.account.discord.err.off");
             case "bad_nick":
                 return Component.translatable("feed.account.error.bad_nick");
             default:

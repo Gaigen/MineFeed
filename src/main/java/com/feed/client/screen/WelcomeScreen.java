@@ -79,9 +79,13 @@ public class WelcomeScreen extends AccountPanelScreen {
         create = addRenderableWidget(new RetroButton(innerX(), y, innerW(), BTN_H,
                 Component.translatable("feed.account.welcome.create"), b -> submit()));
         y += BTN_H + 6;
-        addRenderableWidget(new RetroButton(innerX(), y, innerW(), BTN_H,
+        int bw = buttonsRowWidth(2, 8);
+        addRenderableWidget(new RetroButton(innerX(), y, bw, BTN_H,
                 Component.translatable("feed.account.welcome.have_code"),
                 b -> this.minecraft.setScreen(new RecoverScreen(this, next))));
+        addRenderableWidget(new RetroButton(innerX() + bw + 8, y, bw, BTN_H,
+                Component.translatable("feed.account.welcome.discord"),
+                b -> this.minecraft.setScreen(new DiscordScreen(this, next, true))));
         setInitialFocus(tagValue.isEmpty() ? tag : nick);
     }
 

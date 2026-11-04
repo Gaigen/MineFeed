@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.annotations.SerializedName;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -27,11 +28,19 @@ public final class AccountApi {
     private static final Gson GSON = new Gson();
 
     public record Account(String id, String tag, String nick, long createdAt,
-                          boolean tagProtected, boolean discordLinked, Long canChangeTagAt) {}
+                          boolean tagProtected, boolean discordLinked, Long canChangeTagAt,
+                          String discordUsername, String lostTag, String claimableTag) {}
 
     public record Session(Account account, String key, String recoveryCode) {}
 
-    public record TagCheck(String tag, boolean available, String reason) {}
+    public record TagCheck(String tag, boolean available, String reason, boolean claim,
+                           @SerializedName("protected") boolean isProtected) {}
+
+    /** Started Discord flow: open {@code url} in the browser, poll with state + pollSecret. */
+    public record DiscordFlow(String state, String pollSecret, String url, long expiresAt) {}
+
+    /** status: pending | done | error. For kind=login a new {@code key} comes with done. */
+    public record DiscordPoll(String status, String kind, String code, String error, Account account, String key) {}
 
     public record Meta(int api, String minClient, String latestClient, String downloadUrl) {}
 
@@ -56,9 +65,36 @@ public final class AccountApi {
         return send("GET", "/v2/meta", null, false).thenApply(j -> GSON.fromJson(j, Meta.class));
     }
 
+    /** Signed-in callers also learn whether they may claim the tag via their Discord handle. */
     public CompletableFuture<TagCheck> checkTag(String tag) {
-        return send("GET", "/v2/tags/check?tag=" + URLEncoder.encode(tag, StandardCharsets.UTF_8), null, false)
+        return send("GET", "/v2/tags/check?tag=" + URLEncoder.encode(tag, StandardCharsets.UTF_8), null, hasKey())
                 .thenApply(j -> GSON.fromJson(j, TagCheck.class));
+    }
+
+    public CompletableFuture<DiscordFlow> discordStart(boolean login) {
+        JsonObject body = new JsonObject();
+        body.addProperty("kind", login ? "login" : "link");
+        return send("POST", "/v2/discord/start", body, !login).thenApply(j -> GSON.fromJson(j, DiscordFlow.class));
+    }
+
+    public CompletableFuture<DiscordPoll> discordPoll(DiscordFlow flow) {
+        JsonObject body = new JsonObject();
+        body.addProperty("state", flow.state());
+        body.addProperty("pollSecret", flow.pollSecret());
+        return send("POST", "/v2/discord/poll", body, false).thenApply(j -> GSON.fromJson(j, DiscordPoll.class));
+    }
+
+    public CompletableFuture<Account> discordUnlink() {
+        return send("DELETE", "/v2/me/discord", null, true).thenApply(AccountApi::account);
+    }
+
+    public CompletableFuture<Account> ackLostTag() {
+        return send("DELETE", "/v2/me/lost-tag", null, true).thenApply(AccountApi::account);
+    }
+
+    private boolean hasKey() {
+        String k = keySupplier.get();
+        return k != null && !k.isEmpty();
     }
 
     public CompletableFuture<Session> register(String tag, String nick) {
