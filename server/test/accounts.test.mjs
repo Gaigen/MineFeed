@@ -26,7 +26,7 @@ function setup() {
 
 test("register → me → public profile", async () => {
   const { api } = setup();
-  const r = await api("POST", "/v2/auth/register", { body: { tag: "@Aboba", nick: "  Абоба  " } });
+  const r = await api("POST", "/v2/auth/register", { body: { tag: "@Aboba", nick: "  §aАбоба§r  " } });
   assert.equal(r.status, 201);
   assert.equal(r.data.account.tag, "aboba");
   assert.equal(r.data.account.nick, "Абоба");
@@ -78,7 +78,7 @@ test("nick: duplicates allowed, formatting stripped, length limits", async () =>
   const b = await api("POST", "/v2/auth/register", { body: { tag: "steve2007", nick: "Стив" } });
   assert.equal(a.status, 201); assert.equal(b.status, 201);
   const c = await api("PATCH", "/v2/me", { key: a.data.key, body: { nick: "§cКрасный\u200b Ник\n" } });
-  assert.equal(c.data.account.nick, "cКрасный Ник");
+  assert.equal(c.data.account.nick, "Красный Ник");
   assert.equal((await api("PATCH", "/v2/me", { key: a.data.key, body: { nick: "   " } })).status, 400);
   assert.equal((await api("PATCH", "/v2/me", { key: a.data.key, body: { nick: "x".repeat(33) } })).status, 400);
 });

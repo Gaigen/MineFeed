@@ -31,7 +31,7 @@ export function validTag(raw) {
 const STRIP = /[\u0000-\u001f\u007f-\u009f\u00a7\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
 
 export function validNick(raw) {
-  const nick = String(raw ?? "").replace(STRIP, "").replace(/\s+/g, " ").trim();
+  const nick = String(raw ?? "").replace(/\u00a7./gu, "").replace(STRIP, "").replace(/\s+/g, " ").trim();
   const len = [...nick].length;
   if (len < 1 || len > 32) throw new HttpError(400, "bad_nick", "Ник: от 1 до 32 символов");
   return nick;

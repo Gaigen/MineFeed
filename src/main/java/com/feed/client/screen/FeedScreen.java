@@ -8,7 +8,11 @@ import com.feed.client.ReactionHelper;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
+import com.feed.client.account.AccountApi;
+import com.feed.client.account.AccountManager;
+import com.feed.client.account.UpdateChecker;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
@@ -83,6 +87,20 @@ public class FeedScreen extends RetroScreen {
 
     @Override
     protected void init() {
+        if (!AccountManager.INSTANCE.hasAccount()) {
+            // Defer: switching screens inside init() would re-enter Minecraft.setScreen.
+            this.minecraft.tell(() -> {
+                if (this.minecraft.screen == this) {
+                    this.minecraft.setScreen(new WelcomeScreen(this));
+                }
+            });
+            return;
+        }
+        AccountManager.INSTANCE.refreshOnce();
+        UpdateChecker.checkOnce();
+        addRenderableWidget(new RetroButton(PAD, HDR_Y, profileButtonWidth(), SEARCH_BTN_H,
+                Component.literal(profileLabel()), b -> this.minecraft.setScreen(new ProfileScreen(this))));
+
         searchBox = new EditBox(this.font, contentLeft() + 2, TABS_Y + 20,
                 contentWidth() - 4, 12, Component.translatable("feed.screen.feed.search"));
         searchBox.setBordered(false);
@@ -113,6 +131,10 @@ public class FeedScreen extends RetroScreen {
     @Override
     public void tick() {
         super.tick();
+        if (!AccountManager.INSTANCE.hasAccount()) {
+            this.minecraft.setScreen(new WelcomeScreen(this));
+            return;
+        }
         if (searchOpen && System.currentTimeMillis() - lastTypedAt > 300) {
             String q = searchBox.getValue().trim().replace("#", "").toLowerCase();
             if (!q.equals(lastSentQuery)) {
@@ -270,6 +292,11 @@ public class FeedScreen extends RetroScreen {
             renderSearch(g, mouseX, mouseY);
         }
         renderList(g, mouseX, mouseY);
+
+        if (updateLabel() != null) {
+            RetroUi.drawChip(g, this.font, updateLabel(), PAD, updateChipY(),
+                    UpdateChecker.state() == UpdateChecker.State.OUTDATED ? RetroUi.ERROR : RetroUi.ACCENT, false);
+        }
 
         String label = "!" + NotificationPoller.unreadCount();
         RetroUi.drawChip(g, this.font, label, hdrNotifX(label), HDR_Y,
@@ -504,6 +531,14 @@ public class FeedScreen extends RetroScreen {
             return false;
         }
 
+        String upd = updateLabel();
+        if (upd != null && UpdateChecker.downloadUrl() != null
+                && mouseY >= updateChipY() && mouseY < updateChipY() + RetroUi.CHIP_H
+                && mouseX >= PAD && mouseX < PAD + RetroUi.chipWidth(this.font, upd)) {
+            ConfirmLinkScreen.confirmLinkNow(this, UpdateChecker.downloadUrl());
+            return true;
+        }
+
         String notifLabel = "!" + NotificationPoller.unreadCount();
         int nx = hdrNotifX(notifLabel);
         int nw = RetroUi.chipWidth(this.font, notifLabel);
@@ -708,5 +743,28 @@ public class FeedScreen extends RetroScreen {
 
     private int hdrNotifX(String label) {
         return hdrSearchX() - HDR_GAP - RetroUi.chipWidth(this.font, label);
+    }
+
+    private String profileLabel() {
+        AccountApi.Account a = AccountManager.INSTANCE.account();
+        String handle = a == null ? "@?" : "@" + a.tag();
+        return handle.length() > 14 ? handle.substring(0, 13) + "\u2026" : handle;
+    }
+
+    private int profileButtonWidth() {
+        return this.font.width(profileLabel()) + 10;
+    }
+
+    private int updateChipY() {
+        return HDR_Y + SEARCH_BTN_H + 4;
+    }
+
+    /** Null when no update notice should be shown. */
+    private String updateLabel() {
+        return switch (UpdateChecker.state()) {
+            case UPDATE_AVAILABLE -> Component.translatable("feed.update.chip", UpdateChecker.latest()).getString();
+            case OUTDATED -> Component.translatable("feed.update.chip_outdated").getString();
+            default -> null;
+        };
     }
 }
