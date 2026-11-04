@@ -8,6 +8,7 @@ preview_urls = false
 [vars]
 MIN_CLIENT = "0.2.0"
 LATEST_CLIENT = "0.2.0"
+DISCORD_CLIENT_ID = "1525463800654856263"
 
 [[d1_databases]]
 binding = "DB"
