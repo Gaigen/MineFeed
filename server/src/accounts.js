@@ -10,6 +10,7 @@ const KEY_PREFIX = "mfk_";
 export const LIMITS = {
   register: { max: 5, windowMs: 3_600_000 },  // per IP per hour
   recover: { max: 10, windowMs: 3_600_000 },  // per IP per hour
+  discordStart: { max: 20, windowMs: 3_600_000 }, // per IP per hour
   authFail: { max: 30, windowMs: 600_000 },   // bad keys per IP per 10 min
 };
 
@@ -30,7 +31,7 @@ export async function rateLimit(env, name, id, now) {
   }
 }
 
-function publicAccount(a, now) {
+export function publicAccount(a, now) {
   const nextTagChange = a.tag_changed_at ? a.tag_changed_at + TAG_COOLDOWN : null;
   return {
     id: a.id,
@@ -39,8 +40,24 @@ function publicAccount(a, now) {
     createdAt: a.created_at,
     tagProtected: !!a.tag_protected,
     discordLinked: !!a.discord_id,
+    discordUsername: a.discord_username || null,
+    lostTag: a.lost_tag || null,
     canChangeTagAt: nextTagChange && nextTagChange > now ? nextTagChange : null,
   };
+}
+
+/** Who blocks `tag` for `accountId`: null if free, else { kind: 'owner'|'hold', id, protected }. */
+async function tagBlocker(env, tag, accountId, now) {
+  const owner = await env.DB.prepare("SELECT id, tag_protected FROM accounts WHERE tag = ?").bind(tag).first();
+  if (owner && owner.id !== accountId) return { kind: "owner", id: owner.id, protected: !!owner.tag_protected };
+  const hold = await env.DB.prepare("SELECT account_id, until FROM tag_holds WHERE tag = ?").bind(tag).first();
+  if (hold && hold.until > now && hold.account_id !== accountId) return { kind: "hold", id: hold.account_id, protected: false };
+  return null;
+}
+
+/** The account's verified Discord handle may take `tag` from an unprotected holder. */
+export function verifiedFor(account, tag) {
+  return !!(account && account.discord_username && account.discord_username === tag);
 }
 
 async function tagTaken(env, tag, accountId, now) {
@@ -50,7 +67,7 @@ async function tagTaken(env, tag, accountId, now) {
   return !!(hold && hold.until > now && hold.account_id !== accountId);
 }
 
-async function newSession(env, accountId, now) {
+export async function newSession(env, accountId, now) {
   const key = KEY_PREFIX + base64url(randomBytes(32));
   await env.DB.prepare("INSERT INTO sessions (key_hash, account_id, created_at, last_used_at) VALUES (?, ?, ?, ?)")
     .bind(await sha256Hex(key), accountId, now, now).run();
@@ -77,12 +94,25 @@ export async function authenticate(request, env, now) {
   return row;
 }
 
-export async function checkTag(env, rawTag, now) {
+export async function checkTag(env, rawTag, now, account = null) {
   const tag = normalizeTag(rawTag);
   const problem = tagProblem(tag);
   if (problem) return { tag, available: false, reason: problem };
-  if (await tagTaken(env, tag, null, now)) return { tag, available: false, reason: "Тег уже занят" };
-  return { tag, available: true };
+  const blocker = await tagBlocker(env, tag, account ? account.id : null, now);
+  if (!blocker) return { tag, available: true };
+  if (verifiedFor(account, tag) && !blocker.protected) return { tag, available: true, claim: true };
+  if (blocker.protected) return { tag, available: false, reason: "Тег защищён через Discord", protected: true };
+  return { tag, available: false, reason: "Тег уже занят" };
+}
+
+/** Free tag for someone whose tag was claimed: aboba -> aboba_2, aboba_3, ... */
+async function replacementTag(env, tag, now) {
+  for (let i = 2; i < 1000; i++) {
+    const suffix = "_" + i;
+    const t = tag.slice(0, 32 - suffix.length).replace(/\.$/, "") + suffix;
+    if (!tagProblem(t) && !(await tagTaken(env, t, null, now))) return t;
+  }
+  return "user_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 }
 
 export async function register(request, env, body, now) {
@@ -121,22 +151,44 @@ export async function updateMe(env, account, body, now) {
 export async function changeTag(env, account, body, now) {
   const tag = validTag(body.tag);
   if (tag === account.tag) return { account: publicAccount(account, now) };
-  if (account.tag_changed_at && account.tag_changed_at + TAG_COOLDOWN > now) {
+  const verified = verifiedFor(account, tag);
+  // taking your own verified Discord handle ignores the cooldown
+  if (!verified && account.tag_changed_at && account.tag_changed_at + TAG_COOLDOWN > now) {
     throw new HttpError(429, "tag_cooldown", "Тег можно менять раз в 14 дней", { canChangeTagAt: account.tag_changed_at + TAG_COOLDOWN });
   }
-  if (await tagTaken(env, tag, account.id, now)) throw new HttpError(409, "tag_taken", "Тег уже занят");
+  const blocker = await tagBlocker(env, tag, account.id, now);
+  if (blocker && (blocker.protected || !verified)) {
+    if (blocker.protected) throw new HttpError(409, "tag_protected", "Тег защищён через Discord");
+    throw new HttpError(409, "tag_taken", "Тег уже занят");
+  }
+  const stmts = [];
+  if (blocker && blocker.kind === "owner") {
+    const other = await replacementTag(env, tag, now);
+    // the previous owner can pick a new tag right away and is told what happened
+    stmts.push(env.DB.prepare("UPDATE accounts SET tag = ?, tag_changed_at = NULL, lost_tag = ? WHERE id = ?")
+      .bind(other, tag, blocker.id));
+  }
+  stmts.push(
+    env.DB.prepare("DELETE FROM tag_holds WHERE tag = ?").bind(tag),
+    env.DB.prepare("INSERT INTO tag_holds (tag, account_id, until) VALUES (?1, ?2, ?3) ON CONFLICT(tag) DO UPDATE SET account_id = ?2, until = ?3")
+      .bind(account.tag, account.id, now + TAG_HOLD),
+    // protection belongs to the tag: only a verified Discord handle is protected
+    env.DB.prepare("UPDATE accounts SET tag = ?, tag_changed_at = ?, tag_protected = ?, lost_tag = NULL WHERE id = ?")
+      .bind(tag, now, verified ? 1 : 0, account.id),
+  );
   try {
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO tag_holds (tag, account_id, until) VALUES (?1, ?2, ?3) ON CONFLICT(tag) DO UPDATE SET account_id = ?2, until = ?3")
-        .bind(account.tag, account.id, now + TAG_HOLD),
-      env.DB.prepare("DELETE FROM tag_holds WHERE tag = ? AND account_id = ?").bind(tag, account.id),
-      // changing the tag drops Discord protection: it belonged to the old tag
-      env.DB.prepare("UPDATE accounts SET tag = ?, tag_changed_at = ?, tag_protected = 0 WHERE id = ?").bind(tag, now, account.id),
-    ]);
+    await env.DB.batch(stmts);
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) throw new HttpError(409, "tag_taken", "Тег уже занят");
     throw e;
   }
+  const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();
+  return { account: publicAccount(acc, now) };
+}
+
+/** Hide the "your tag was taken" notice. */
+export async function ackLostTag(env, account, now) {
+  await env.DB.prepare("UPDATE accounts SET lost_tag = NULL WHERE id = ?").bind(account.id).run();
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();
   return { account: publicAccount(acc, now) };
 }
