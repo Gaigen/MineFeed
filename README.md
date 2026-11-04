@@ -30,7 +30,28 @@ Minecraft moments usually die in screenshots nobody sees. MineFeed gives them a 
 2. Drop the jar into `mods/`
 3. Done
 
-Settings: Mods → MineFeed → Config (inventory button and offsets, death-post prompt, toast notifications, GG-compose).
+Settings: Mods → MineFeed → Config. Existing options are preserved. The new
+**Notifications** section controls reply toasts, their placement, duration,
+count and polling interval, optional local sound and local chat notifications (both off by
+default; they are never sent to the server chat). **Post templates** controls
+the prefills for death and advancement posts. Templates use these placeholders:
+
+- Reply toast and chat: `{author}`, `{message}`, `{post}`
+- Death post: `{player}`, `{message}`
+- Advancement post: `{player}`, `{advancement}`
+
+Unknown placeholders stay as written. Templates do not post automatically; the
+compose screen still requires manual submission. Toasts can be turned off
+without disabling the unread inbox. Configuration is saved in
+`config/feed-client.toml`.
+
+When local chat notifications are enabled, replies include a post preview and
+clickable **Open** and **Reply** actions. Open shows the discussion; Reply
+prefills a client-only command in chat. Type the reply and press Enter to send it
+to the MineFeed discussion, not to Minecraft server chat. The Minecraft chat
+input length limit applies; use the post screen for longer comments. Chat
+history can retain the command and text. Post previews are limited by the
+notification service. Failed requests are reported locally.
 
 ## Build from source
 
@@ -40,3 +61,12 @@ Settings: Mods → MineFeed → Config (inventory button and offsets, death-post
 ## License
 
 GPL-3.0-or-later — [LICENSE](LICENSE).
+## Notification inbox
+
+The `!` counter in the feed opens the unread inbox even when the count is zero.
+Opening the inbox does not mark entries read. Open a post or choose **Mark all
+read** to clear entries. Unread entries and the cursor are saved locally (up to
+100 entries); the service returns up to 50 recent notifications. The notification
+sound plays once per received batch, not once per comment. Notification fetch
+uses the current service API and only reports comments on your own posts;
+reactions, mentions and new-post subscriptions need server support.

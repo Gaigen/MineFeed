@@ -47,7 +47,8 @@ public final class DeathHook {
         if (mc.player == null) {
             return;
         }
-        String message = deathMessage(screen, mc);
+        String message = MessageTemplate.render(FeedConfig.deathTemplate(), java.util.Map.of(
+                "message", deathMessage(screen, mc), "player", mc.getUser().getName()));
         event.addListener(new RetroButton(screen.width / 2 - 100, screen.height / 4 + 120, 200, 18,
                 Component.translatable("feed.screen.death.post"), b -> {
             pending = message;

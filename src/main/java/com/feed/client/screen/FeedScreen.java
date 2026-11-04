@@ -271,10 +271,9 @@ public class FeedScreen extends RetroScreen {
         }
         renderList(g, mouseX, mouseY);
 
-        if (NotificationPoller.hasUnread()) {
-            String label = "!" + NotificationPoller.unreadCount();
-            RetroUi.drawChip(g, this.font, label, hdrNotifX(label), HDR_Y, RetroUi.ERROR, true);
-        }
+        String label = "!" + NotificationPoller.unreadCount();
+        RetroUi.drawChip(g, this.font, label, hdrNotifX(label), HDR_Y,
+                NotificationPoller.hasUnread() ? RetroUi.ERROR : RetroUi.GRAY, NotificationPoller.hasUnread());
     }
 
     private void renderHeader(GuiGraphics g) {
@@ -505,15 +504,13 @@ public class FeedScreen extends RetroScreen {
             return false;
         }
 
-        if (NotificationPoller.hasUnread()) {
-            String label = "!" + NotificationPoller.unreadCount();
-            int nx = hdrNotifX(label);
-            int nw = RetroUi.chipWidth(this.font, label);
-            if (mouseY >= HDR_Y && mouseY < HDR_Y + RetroUi.CHIP_H
-                    && mouseX >= nx && mouseX < nx + nw) {
-                this.minecraft.setScreen(new NotificationsScreen(this));
-                return true;
-            }
+        String notifLabel = "!" + NotificationPoller.unreadCount();
+        int nx = hdrNotifX(notifLabel);
+        int nw = RetroUi.chipWidth(this.font, notifLabel);
+        if (mouseY >= HDR_Y && mouseY < HDR_Y + RetroUi.CHIP_H
+                && mouseX >= nx && mouseX < nx + nw) {
+            this.minecraft.setScreen(new NotificationsScreen(this));
+            return true;
         }
 
         if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {

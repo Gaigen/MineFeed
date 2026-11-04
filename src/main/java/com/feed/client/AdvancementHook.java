@@ -40,6 +40,8 @@ public final class AdvancementHook {
         if (text.isBlank()) {
             return;
         }
-        mc.execute(() -> mc.setScreen(new ComposeScreen(new FeedScreen(), PostType.GG, text)));
+        String composed = MessageTemplate.render(FeedConfig.advancementTemplate(), java.util.Map.of(
+                "advancement", text, "player", mc.getUser().getName()));
+        mc.execute(() -> mc.setScreen(new ComposeScreen(new FeedScreen(), PostType.GG, composed)));
     }
 }
