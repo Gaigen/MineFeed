@@ -39,7 +39,7 @@ client.on("raw", (packet) => {
   if (out) { relay.push(t, out); forwarded++; }
 });
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`ready as ${client.user.tag}`);
   if (MOD_ROLE_ID) {
     try {
