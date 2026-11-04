@@ -7,6 +7,29 @@ import { normalizeTag, tagProblem } from "./names.js";
 const DISCORD = "https:" + "//discord.com";
 export const FLOW_TTL = 10 * 60_000;
 
+// Browser pages: English by default (shared English-first community), Russian for ru browsers.
+const PAGES = {
+  expired: { en: ["Link expired", "Start again in the game: Profile → Discord."], ru: ["Ссылка устарела", "Начни заново в игре: Профиль → Discord."] },
+  denied: { en: ["Cancelled", "You didn't allow access. You can close this tab and go back to Minecraft."], ru: ["Отменено", "Ты не разрешил доступ. Можно закрыть вкладку и вернуться в Minecraft."] },
+  failed: { en: ["Something went wrong", "Discord didn't respond. Go back to the game and try again."], ru: ["Не получилось", "Discord не ответил. Вернись в игру и попробуй ещё раз."] },
+  not_linked: { en: ["Profile not found", "No MineFeed profile is linked to this Discord. Go back to the game: you can create a profile or sign in with a recovery code."], ru: ["Профиль не найден", "К этому Discord не привязан профиль MineFeed. Вернись в игру: можно создать профиль или войти по коду восстановления."] },
+  banned: { en: ["Account banned", "Sign-in is not possible."], ru: ["Аккаунт заблокирован", "Вход невозможен."] },
+  login_ok: { en: ["Done!", "Signed in as @{tag}. Close this tab and go back to Minecraft."], ru: ["Готово!", "Вход в @{tag} подтверждён. Закрой вкладку и вернись в Minecraft."] },
+  taken: { en: ["Discord already linked", "This Discord is already linked to another MineFeed profile. Unlink it there first."], ru: ["Discord уже занят", "Этот Discord уже привязан к другому профилю MineFeed. Сначала отвяжи его там."] },
+  no_profile: { en: ["Profile not found", "Go back to the game and try again."], ru: ["Профиль не найден", "Вернись в игру и попробуй ещё раз."] },
+  link_ok: { en: ["Discord linked!", "Profile @{tag} is now linked to Discord. Close this tab and go back to Minecraft."], ru: ["Discord привязан!", "Профиль @{tag} связан с Discord. Закрой вкладку и вернись в Minecraft."] },
+};
+
+function lang(request) {
+  return /^\s*ru\b/i.test(request.headers.get("accept-language") || "") ? "ru" : "en";
+}
+
+function say(request, status, id, vars = {}) {
+  const l = lang(request);
+  const [title, body] = PAGES[id][l];
+  return page(status, title, esc(body).replace(/\{(\w+)\}/g, (_, k) => esc(vars[k] ?? "")), l);
+}
+
 function redirectUri(request) {
   return new URL(request.url).origin + "/v2/discord/callback";
 }
@@ -39,7 +62,7 @@ export async function go(request, env, state, now) {
   configured(env);
   const flow = await env.DB.prepare("SELECT state, created_at, status FROM discord_flows WHERE state = ?").bind(state).first();
   if (!flow || flow.created_at + FLOW_TTL < now || flow.status !== "pending") {
-    return page(410, "Ссылка устарела", "Начни привязку заново в игре: Профиль → Discord.");
+    return say(request, 410, "expired");
   }
   const q = new URLSearchParams({
     response_type: "code",
@@ -103,41 +126,41 @@ export async function callback(request, env, now) {
   const state = url.searchParams.get("state") || "";
   const flow = await env.DB.prepare("SELECT * FROM discord_flows WHERE state = ?").bind(state).first();
   if (!flow || flow.created_at + FLOW_TTL < now || flow.status !== "pending") {
-    return page(410, "Ссылка устарела", "Начни заново в игре.");
+    return say(request, 410, "expired");
   }
   if (url.searchParams.get("error")) {
     await finish(env, state, "error", "denied", "Доступ не разрешён");
-    return page(200, "Отменено", "Ты не разрешил доступ. Можно закрыть вкладку и вернуться в Minecraft.");
+    return say(request, 200, "denied");
   }
   const user = await discordUser(request, env, url.searchParams.get("code") || "");
   if (!user) {
     await finish(env, state, "error", "discord_failed", "Discord не ответил, попробуй ещё раз");
-    return page(502, "Не получилось", "Discord не ответил. Вернись в игру и попробуй ещё раз.");
+    return say(request, 502, "failed");
   }
   const owner = await env.DB.prepare("SELECT id, tag, banned FROM accounts WHERE discord_id = ?").bind(user.id).first();
 
   if (flow.kind === "login") {
     if (!owner) {
       await finish(env, state, "error", "not_linked", "К этому Discord не привязан профиль MineFeed");
-      return page(404, "Профиль не найден", "К этому Discord не привязан профиль MineFeed. Вернись в игру: можно создать профиль или войти по коду восстановления.");
+      return say(request, 404, "not_linked");
     }
     if (owner.banned) {
       await finish(env, state, "error", "banned", "Аккаунт заблокирован");
-      return page(403, "Аккаунт заблокирован", "Вход невозможен.");
+      return say(request, 403, "banned");
     }
     await finish(env, state, "done", null, null, owner.id);
-    return page(200, "Готово!", `Вход в @${esc(owner.tag)} подтверждён. Закрой вкладку и вернись в Minecraft.`);
+    return say(request, 200, "login_ok", { tag: owner.tag });
   }
 
   // link
   if (owner && owner.id !== flow.account_id) {
     await finish(env, state, "error", "discord_taken", "Этот Discord уже привязан к другому профилю");
-    return page(409, "Discord уже занят", "Этот Discord уже привязан к другому профилю MineFeed. Сначала отвяжи его там.");
+    return say(request, 409, "taken");
   }
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(flow.account_id).first();
   if (!acc) {
     await finish(env, state, "error", "not_found", "Профиль не найден");
-    return page(404, "Профиль не найден", "Вернись в игру и попробуй ещё раз.");
+    return say(request, 404, "no_profile");
   }
   // your current tag becomes protected if it is your Discord handle
   const protect = user.username && user.username === acc.tag ? 1 : acc.tag_protected && acc.discord_id === user.id ? 1 : 0;
@@ -147,12 +170,12 @@ export async function callback(request, env, now) {
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) {
       await finish(env, state, "error", "discord_taken", "Этот Discord уже привязан к другому профилю");
-      return page(409, "Discord уже занят", "Этот Discord уже привязан к другому профилю MineFeed.");
+      return say(request, 409, "taken");
     }
     throw e;
   }
   await finish(env, state, "done");
-  return page(200, "Discord привязан!", `Профиль @${esc(acc.tag)} связан с Discord. Закрой вкладку и вернись в Minecraft.`);
+  return say(request, 200, "link_ok", { tag: acc.tag });
 }
 
 /** POST /v2/discord/poll {state, pollSecret} — one-time result for the mod. */
@@ -202,8 +225,8 @@ function esc(s) {
 }
 
 /** Tiny retro page shown in the browser after Discord. `body` must already be escaped. */
-export function page(status, title, body) {
-  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+export function page(status, title, body, l = "en") {
+  const html = `<!doctype html><html lang="${l}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MineFeed — ${esc(title)}</title><style>
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#000;color:#d6d6d6;font:16px/1.5 "Courier New",monospace}
 .box{max-width:440px;margin:24px;padding:24px 28px;border:2px solid #8a8a8a;box-shadow:6px 6px 0 #2e2e2e}

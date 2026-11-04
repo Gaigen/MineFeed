@@ -68,7 +68,7 @@ test("link: go redirects to Discord, callback links, poll is one-time, handle ==
   assert.equal(loc.searchParams.get("redirect_uri"), "https://x.test/v2/discord/callback");
   assert.ok(!go.headers.get("location").includes(s.pollSecret), "poll secret never in browser URL");
   assert.equal(cb.status, 200);
-  assert.match(html, /DISCORD ПРИВЯЗАН/);
+  assert.match(html, /DISCORD LINKED/);
   assert.equal(p.data.status, "done");
   assert.equal(p.data.account.discordLinked, true);
   assert.equal(p.data.account.discordUsername, "aboba");
@@ -179,6 +179,13 @@ test("one Discord per profile, deny, legacy names, unlink, expiry", async () => 
   assert.equal(late.status, 410);
   const pl = await t.api("POST", "/v2/discord/poll", { body: { state: s.state, pollSecret: s.pollSecret }, now: T0 + FLOW_TTL + 1 });
   assert.equal(pl.data.code, "expired");
+});
+
+test("browser pages follow Accept-Language", async () => {
+  const t = setup();
+  const req = (lang) => new Request("https://x.test/v2/discord/go/" + "a".repeat(32), { headers: lang ? { "accept-language": lang } : {} });
+  assert.match(await (await route(req(null), t.env, T0)).text(), /LINK EXPIRED/);
+  assert.match(await (await route(req("ru-RU,ru;q=0.9"), t.env, T0)).text(), /ССЫЛКА УСТАРЕЛА/);
 });
 
 test("html page escapes Discord-provided text", async () => {
