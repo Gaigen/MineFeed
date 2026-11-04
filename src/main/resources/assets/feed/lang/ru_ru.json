@@ -33,6 +33,7 @@
   "feed.screen.error.unknown": "Неизвестная ошибка",
   "feed.author.unknown": "Юзер из Discord",
   "feed.author.discord": "discord",
+  "feed.notif.react": "реакция на твой пост (всего %s)",
   "feed.time.now": "только что",
   "feed.time.minutes": "%d мин назад",
   "feed.time.hours": "%d ч назад",

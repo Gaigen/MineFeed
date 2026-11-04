@@ -33,6 +33,7 @@
   "feed.screen.error.unknown": "Unknown error",
   "feed.author.unknown": "Discord user",
   "feed.author.discord": "discord",
+  "feed.notif.react": "reaction to your post (%s total)",
   "feed.time.now": "just now",
   "feed.time.minutes": "%dm ago",
   "feed.time.hours": "%dh ago",

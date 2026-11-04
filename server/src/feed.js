@@ -1,0 +1,398 @@
+// Feed: posts live in Discord forum threads (written by a webhook as the player), D1 is the index.
+import { HttpError } from "./util.js";
+import { rateLimit } from "./accounts.js";
+import { dapi, webhookName } from "./dapi.js";
+import * as N from "./notify.js";
+
+export const TYPES = ["rip", "help", "gg", "talk"];
+export const MAX_POST = 500;
+export const MAX_COMMENT = 300;
+export const SYNC_OVERLAP = 3000;      // re-send changes this close to the cursor (clock jitter)
+export const SYNC_MAX_AGE = 86_400_000; // older cursors must reload the feed
+const PAGE = 20;
+const COMMENTS_PAGE = 50;
+
+const POST_SELECT = `SELECT p.*, a.tag AS a_tag, a.nick AS a_nick FROM posts p LEFT JOIN accounts a ON a.id = p.author_id`;
+const COMMENT_SELECT = `SELECT c.*, a.tag AS a_tag, a.nick AS a_nick FROM comments c LEFT JOIN accounts a ON a.id = c.author_id`;
+
+// ---------- text ----------
+
+const CTRL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g;
+
+export function cleanText(raw, max) {
+  const text = String(raw ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a7./gu, "")
+    .replace(CTRL, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const len = [...text].length;
+  if (len < 1) throw new HttpError(400, "empty_text", "Пустой текст");
+  if (len > max) throw new HttpError(400, "too_long", `Слишком длинный текст (максимум ${max})`);
+  return text;
+}
+
+export function threadName(text) {
+  const line = text.split("\n").find((l) => l.trim()) || text;
+  const chars = [...line.trim()];
+  return chars.length > 95 ? chars.slice(0, 94).join("") + "…" : chars.join("");
+}
+
+// ---------- spaces ----------
+
+const spaceCaches = new WeakMap(); // per D1 binding (one in production; many in tests)
+
+function cacheFor(env) {
+  let c = spaceCaches.get(env.DB);
+  if (!c) spaceCaches.set(env.DB, (c = new Map()));
+  return c;
+}
+
+/** Space row with a ready webhook; the global space is created from env on first use. */
+export async function getSpace(env, id) {
+  const cached = cacheFor(env).get(id);
+  if (cached && cached.webhook_id) return cached;
+  let row = await env.DB.prepare("SELECT * FROM spaces WHERE id = ?").bind(id).first();
+  if (!row && id === "global") {
+    if (!env.FEED_FORUM_ID) throw new HttpError(503, "feed_off", "Лента сейчас недоступна");
+    await env.DB.prepare("INSERT OR IGNORE INTO spaces (id, forum_id, tags) VALUES ('global', ?, ?)")
+      .bind(env.FEED_FORUM_ID, env.FEED_TAGS || "{}").run();
+    row = await env.DB.prepare("SELECT * FROM spaces WHERE id = ?").bind(id).first();
+  }
+  if (!row) throw new HttpError(404, "no_space", "Сообщество не найдено");
+  if (!row.webhook_id) {
+    const wh = await dapi(env, "POST", `/channels/${row.forum_id}/webhooks`, { body: { name: "MineFeed" } });
+    await env.DB.prepare("UPDATE spaces SET webhook_id = ?, webhook_token = ? WHERE id = ? AND webhook_id IS NULL")
+      .bind(wh.id, wh.token, id).run();
+    row = await env.DB.prepare("SELECT * FROM spaces WHERE id = ?").bind(id).first();
+  }
+  row.tagIds = JSON.parse(row.tags || "{}");
+  cacheFor(env).set(id, row);
+  return row;
+}
+
+/** Who may read/write a space. Communities will check membership here. */
+async function spaceFor(env, account, id) {
+  const sid = String(id || "global");
+  if (sid !== "global") throw new HttpError(404, "no_space", "Сообщество не найдено");
+  return getSpace(env, sid);
+}
+
+async function postAs(env, space, account, payload, threadId) {
+  const q = "?wait=true" + (threadId ? `&thread_id=${threadId}` : "");
+  return dapi(env, "POST", `/webhooks/${space.webhook_id}/${space.webhook_token}${q}`, {
+    auth: false,
+    body: {
+      ...payload,
+      username: webhookName(account.nick, account.tag),
+      allowed_mentions: { parse: [] },
+    },
+  });
+}
+
+// ---------- output ----------
+
+function author(r) {
+  if (r.author_id) return { id: r.author_id, tag: r.a_tag || null, nick: r.a_nick || "?" };
+  return { discord: true, nick: r.ext_name || "Discord" };
+}
+
+export function postOut(r, my) {
+  if (r.deleted) return { id: r.id, deleted: true, updatedAt: r.updated_at };
+  return {
+    id: r.id,
+    space: r.space,
+    type: r.type,
+    text: r.text,
+    author: author(r),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    comments: r.comments,
+    reactions: [r.re0, r.re1],
+    my: my ?? -1,
+    solved: !!r.solved,
+    image: r.image ? JSON.parse(r.image) : null,
+  };
+}
+
+export function commentOut(r) {
+  if (r.deleted) return { id: r.id, postId: r.post_id, deleted: true, updatedAt: r.updated_at };
+  return {
+    id: r.id,
+    postId: r.post_id,
+    text: r.text,
+    author: author(r),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    image: r.image ? JSON.parse(r.image) : null,
+  };
+}
+
+async function myReactions(env, account, ids) {
+  if (!ids.length) return {};
+  const { results } = await env.DB.prepare(
+    `SELECT post_id, slot FROM reactions WHERE account_id = ? AND post_id IN (${ids.map(() => "?").join(",")})`
+  ).bind(account.id, ...ids).all();
+  return Object.fromEntries(results.map((r) => [r.post_id, r.slot]));
+}
+
+async function postsOut(env, account, rows) {
+  const my = await myReactions(env, account, rows.filter((r) => !r.deleted).map((r) => r.id));
+  return rows.map((r) => postOut(r, my[r.id]));
+}
+
+function cursorOf(r) {
+  return `${r.created_at}_${r.id}`;
+}
+
+function parseCursor(raw) {
+  const m = /^(\d{1,15})_(\d{1,20})$/.exec(String(raw || ""));
+  return m ? [Number(m[1]), m[2]] : null;
+}
+
+function intParam(raw, def, min, max) {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+}
+
+async function loadPost(env, id) {
+  if (!/^\d{1,20}$/.test(String(id))) throw new HttpError(404, "no_post", "Пост не найден");
+  const row = await env.DB.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(id).first();
+  if (!row || row.deleted) throw new HttpError(404, "no_post", "Пост удалён или не найден");
+  return row;
+}
+
+function canModerate(account, authorId) {
+  return account.id === authorId || !!account.moderator;
+}
+
+// ---------- reading ----------
+
+/** GET /v2/feed?space=&type=rip|help|gg|talk|mine&before=&limit= */
+export async function feed(env, account, q, now) {
+  const space = await spaceFor(env, account, q.get("space"));
+  const limit = intParam(q.get("limit"), PAGE, 1, 50);
+  const type = q.get("type");
+  const where = ["p.space = ?", "p.deleted = 0"];
+  const binds = [space.id];
+  if (TYPES.includes(type)) { where.push("p.type = ?"); binds.push(type); }
+  if (type === "mine") { where.push("p.author_id = ?"); binds.push(account.id); }
+  const before = parseCursor(q.get("before"));
+  if (before) { where.push("(p.created_at, p.id) < (?, ?)"); binds.push(...before); }
+  const { results } = await env.DB.prepare(
+    `${POST_SELECT} WHERE ${where.join(" AND ")} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
+  ).bind(...binds, limit + 1).all();
+  const more = results.length > limit;
+  const rows = results.slice(0, limit);
+  return { posts: await postsOut(env, account, rows), next: more ? cursorOf(rows[rows.length - 1]) : null, now };
+}
+
+/** GET /v2/posts/:id — the post and its latest comments. */
+export async function getPost(env, account, id, now) {
+  const row = await loadPost(env, id);
+  await spaceFor(env, account, row.space);
+  const [post] = await postsOut(env, account, [row]);
+  const page = await commentsPage(env, row.id, null);
+  return { post, ...page, now };
+}
+
+async function commentsPage(env, postId, before) {
+  const where = ["c.post_id = ?", "c.deleted = 0"];
+  const binds = [postId];
+  if (before) { where.push("(c.created_at, c.id) < (?, ?)"); binds.push(...before); }
+  const { results } = await env.DB.prepare(
+    `${COMMENT_SELECT} WHERE ${where.join(" AND ")} ORDER BY c.created_at DESC, c.id DESC LIMIT ?`
+  ).bind(...binds, COMMENTS_PAGE + 1).all();
+  const more = results.length > COMMENTS_PAGE;
+  const rows = results.slice(0, COMMENTS_PAGE).reverse(); // oldest first for display
+  return { comments: rows.map(commentOut), before: more ? cursorOf(rows[0]) : null };
+}
+
+/** GET /v2/posts/:id/comments?before= — older comments. */
+export async function comments(env, account, id, q) {
+  const row = await loadPost(env, id);
+  await spaceFor(env, account, row.space);
+  return commentsPage(env, row.id, parseCursor(q.get("before")));
+}
+
+/**
+ * GET /v2/sync?since=&space=&post= — one cheap call the mod repeats:
+ * changed posts in the space, changed comments of the open post, new notifications.
+ */
+export async function sync(env, account, q, now) {
+  const space = await spaceFor(env, account, q.get("space"));
+  const since = intParam(q.get("since"), 0, 0, now);
+  const interval = { open: intParam(env.SYNC_OPEN, 12, 5, 600), closed: intParam(env.SYNC_CLOSED, 120, 30, 3600) };
+  const notifications = await N.changes(env, account, since ? since - SYNC_OVERLAP : 0);
+  if (!since || now - since > SYNC_MAX_AGE) return { now, reset: true, posts: [], comments: [], notifications, interval };
+  const from = since - SYNC_OVERLAP;
+  const { results } = await env.DB.prepare(
+    `${POST_SELECT} WHERE p.space = ? AND p.updated_at > ? ORDER BY p.updated_at LIMIT 101`
+  ).bind(space.id, from).all();
+  if (results.length > 100) return { now, reset: true, posts: [], comments: [], notifications, interval };
+  const out = { now, reset: false, posts: await postsOut(env, account, results), comments: [], notifications, interval };
+  const postId = q.get("post");
+  if (postId && /^\d{1,20}$/.test(postId)) {
+    const c = await env.DB.prepare(
+      `${COMMENT_SELECT} WHERE c.post_id = ? AND c.updated_at > ? ORDER BY c.updated_at LIMIT 101`
+    ).bind(postId, from).all();
+    out.comments = c.results.slice(0, 100).map(commentOut);
+  }
+  return out;
+}
+
+// ---------- writing ----------
+
+/** POST /v2/posts {space, type, text} */
+export async function createPost(env, account, body, now) {
+  const space = await spaceFor(env, account, body.space);
+  if (!TYPES.includes(body.type)) throw new HttpError(400, "bad_type", "Неизвестный тип поста");
+  const text = cleanText(body.text, MAX_POST);
+  await rateLimit(env, "post", account.id, now);
+  const tag = space.tagIds[body.type];
+  const msg = await postAs(env, space, account, {
+    content: text,
+    thread_name: threadName(text),
+    ...(tag ? { applied_tags: [tag] } : {}),
+  });
+  const id = msg.channel_id;
+  await env.DB.prepare(
+    "INSERT INTO posts (id, space, author_id, type, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, space.id, account.id, body.type, text, now, now).run();
+  await N.mentions(env, account, text, { postId: id, skip: [] }, now);
+  return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
+}
+
+/** POST /v2/posts/:id/comments {text} */
+export async function createComment(env, account, id, body, now) {
+  const post = await loadPost(env, id);
+  const space = await spaceFor(env, account, post.space);
+  const text = cleanText(body.text, MAX_COMMENT);
+  await rateLimit(env, "comment", account.id, now);
+  let msg;
+  try {
+    msg = await postAs(env, space, account, { content: text }, post.id);
+  } catch (e) {
+    if (e.discordStatus === 404) { // thread was removed in Discord
+      await markPostDeleted(env, post.id, now);
+      throw new HttpError(404, "no_post", "Пост удалён или не найден");
+    }
+    throw e;
+  }
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO comments (id, post_id, author_id, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(msg.id, post.id, account.id, text, now, now),
+    env.DB.prepare("UPDATE posts SET comments = comments + 1, updated_at = ? WHERE id = ?").bind(now, post.id),
+  ]);
+  const notified = [];
+  if (post.author_id && post.author_id !== account.id) {
+    await N.add(env, { to: post.author_id, kind: "comment", postId: post.id, commentId: msg.id, actor: account, text }, now);
+    notified.push(post.author_id);
+  }
+  await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, skip: notified }, now);
+  const row = await env.DB.prepare(`${COMMENT_SELECT} WHERE c.id = ?`).bind(msg.id).first();
+  return { comment: commentOut(row) };
+}
+
+export async function markPostDeleted(env, id, now) {
+  await env.DB.prepare("UPDATE posts SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0").bind(now, id).run();
+}
+
+/** DELETE /v2/posts/:id — author or moderator. */
+export async function deletePost(env, account, id, now) {
+  const post = await loadPost(env, id);
+  if (!canModerate(account, post.author_id)) throw new HttpError(403, "forbidden", "Можно удалять только свои посты");
+  await dapi(env, "DELETE", `/channels/${post.id}`, { allow404: true });
+  await markPostDeleted(env, post.id, now);
+  return { ok: true };
+}
+
+/** DELETE /v2/comments/:id — comment author, post author or moderator. */
+export async function deleteComment(env, account, id, now) {
+  if (!/^\d{1,20}$/.test(String(id))) throw new HttpError(404, "no_comment", "Комментарий не найден");
+  const c = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND deleted = 0").bind(id).first();
+  if (!c) throw new HttpError(404, "no_comment", "Комментарий не найден");
+  const post = await env.DB.prepare("SELECT author_id FROM posts WHERE id = ?").bind(c.post_id).first();
+  if (account.id !== c.author_id && !canModerate(account, post && post.author_id)) {
+    throw new HttpError(403, "forbidden", "Можно удалять только свои комментарии");
+  }
+  await dapi(env, "DELETE", `/channels/${c.post_id}/messages/${c.id}`, { allow404: true });
+  await markCommentDeleted(env, c.id, c.post_id, now);
+  return { ok: true };
+}
+
+export async function markCommentDeleted(env, id, postId, now) {
+  const r = await env.DB.prepare("UPDATE comments SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0").bind(now, id).run();
+  if (r.meta.changes) {
+    await env.DB.prepare("UPDATE posts SET comments = MAX(comments - 1, 0), updated_at = ? WHERE id = ?").bind(now, postId).run();
+  }
+}
+
+/** POST /v2/posts/:id/react {slot: 0|1} — toggles; picking the other slot switches. */
+export async function react(env, account, id, body, now) {
+  const slot = body.slot === 0 || body.slot === 1 ? body.slot : null;
+  if (slot === null) throw new HttpError(400, "bad_slot", "Неизвестная реакция");
+  const post = await loadPost(env, id);
+  await spaceFor(env, account, post.space);
+  const cur = await env.DB.prepare("SELECT slot FROM reactions WHERE post_id = ? AND account_id = ?").bind(post.id, account.id).first();
+  const adding = !cur || cur.slot !== slot;
+  // counts are adjusted from the rows actually present, so retries and races stay consistent
+  const stmts = [
+    env.DB.prepare(
+      `UPDATE posts SET
+         re0 = MAX(re0 - (SELECT COUNT(*) FROM reactions WHERE post_id = ?1 AND account_id = ?2 AND slot = 0), 0),
+         re1 = MAX(re1 - (SELECT COUNT(*) FROM reactions WHERE post_id = ?1 AND account_id = ?2 AND slot = 1), 0),
+         updated_at = ?3
+       WHERE id = ?1`
+    ).bind(post.id, account.id, now),
+    env.DB.prepare("DELETE FROM reactions WHERE post_id = ? AND account_id = ?").bind(post.id, account.id),
+  ];
+  if (adding) {
+    stmts.push(
+      env.DB.prepare("INSERT INTO reactions (post_id, account_id, slot, created_at) VALUES (?, ?, ?, ?)").bind(post.id, account.id, slot, now),
+      env.DB.prepare(`UPDATE posts SET re${slot} = re${slot} + 1 WHERE id = ?`).bind(post.id),
+    );
+  }
+  await env.DB.batch(stmts);
+  const row = await env.DB.prepare("SELECT re0, re1 FROM posts WHERE id = ?").bind(post.id).first();
+  if (adding && post.author_id && post.author_id !== account.id) {
+    await N.react(env, { to: post.author_id, postId: post.id, actor: account, count: row.re0 + row.re1, text: post.text }, now);
+  }
+  return { reactions: [row.re0, row.re1], my: adding ? slot : -1 };
+}
+
+/** POST /v2/posts/:id/solve {solved} — author of a help post marks it solved. */
+export async function solve(env, account, id, body, now) {
+  const post = await loadPost(env, id);
+  if (post.type !== "help") throw new HttpError(400, "not_help", "Решённым можно отметить только вопрос");
+  if (!canModerate(account, post.author_id)) throw new HttpError(403, "forbidden", "Только автор может отметить вопрос решённым");
+  const solved = body.solved === undefined ? !post.solved : !!body.solved;
+  const space = await getSpace(env, post.space);
+  const tags = [space.tagIds.help, solved ? space.tagIds.solved : null].filter(Boolean);
+  if (tags.length) await dapi(env, "PATCH", `/channels/${post.id}`, { body: { applied_tags: tags }, allow404: true });
+  await env.DB.prepare("UPDATE posts SET solved = ?, updated_at = ? WHERE id = ?").bind(solved ? 1 : 0, now, post.id).run();
+  return { post: postOut(await loadPost(env, post.id), (await myReactions(env, account, [post.id]))[post.id]) };
+}
+
+/** POST /v2/reports {postId, commentId?, reason} — goes to the moderators' channel. */
+export async function report(env, account, body, now) {
+  if (!env.REPORT_CHANNEL_ID) throw new HttpError(503, "reports_off", "Жалобы сейчас недоступны");
+  const post = await loadPost(env, body.postId);
+  let comment = null;
+  if (body.commentId) {
+    comment = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND post_id = ? AND deleted = 0").bind(String(body.commentId), post.id).first();
+    if (!comment) throw new HttpError(404, "no_comment", "Комментарий не найден");
+  }
+  const reason = cleanText(body.reason || "—", 300);
+  await rateLimit(env, "report", account.id, now);
+  const link = `https://discord.com/channels/${env.DISCORD_GUILD_ID}/${post.id}` + (comment ? `/${comment.id}` : "");
+  const quoted = (comment ? comment.text : post.text).slice(0, 300).replace(/\n/g, "\n> ");
+  await dapi(env, "POST", `/channels/${env.REPORT_CHANNEL_ID}/messages`, {
+    body: {
+      content: `🚩 **Report** from @${account.tag} (${account.id})\n**Reason:** ${reason}\n**${comment ? "Comment" : "Post"}:** ${link}\n> ${quoted}`,
+      allowed_mentions: { parse: [] },
+    },
+  });
+  return { ok: true };
+}

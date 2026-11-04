@@ -3,6 +3,9 @@
 import { HttpError, json, errorResponse, readJson } from "./util.js";
 import * as A from "./accounts.js";
 import * as D from "./discord.js";
+import * as F from "./feed.js";
+import * as N from "./notify.js";
+import * as B from "./bot.js";
 
 const API = 2;
 
@@ -15,6 +18,9 @@ export default {
       console.error(e);
       return json({ error: "Внутренняя ошибка сервера", code: "internal" }, 500);
     }
+  },
+  async scheduled(_event, env) {
+    await N.prune(env, Date.now());
   },
 };
 
@@ -48,7 +54,35 @@ export async function route(request, env, now) {
   const userMatch = /^\/v2\/users\/@?([^/]+)$/.exec(p);
   if (userMatch && m === "GET") return json(await A.publicProfile(env, decodeURIComponent(userMatch[1]), now));
 
+  if (p === "/v2/bot/events" && m === "POST") {
+    await B.checkBot(request, env);
+    return json(await B.events(env, await readJson(request, 256 * 1024), now));
+  }
+
   // everything below needs an account
+  if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
+      || p.startsWith("/v2/notifications") || p === "/v2/reports") {
+    const account = await A.authenticate(request, env, now);
+    const q = url.searchParams;
+    if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
+    if (p === "/v2/sync" && m === "GET") return json(await F.sync(env, account, q, now));
+    if (p === "/v2/posts" && m === "POST") return json(await F.createPost(env, account, await readJson(request), now), 201);
+    if (p === "/v2/reports" && m === "POST") return json(await F.report(env, account, await readJson(request), now));
+    if (p === "/v2/notifications" && m === "GET") return json(await N.list(env, account, q));
+    if (p === "/v2/notifications/seen" && m === "POST") return json(await N.seen(env, account, await readJson(request), now));
+    const cm = /^\/v2\/comments\/(\d{1,20})$/.exec(p);
+    if (cm && m === "DELETE") return json(await F.deleteComment(env, account, cm[1], now));
+    const pm = /^\/v2\/posts\/(\d{1,20})(\/[a-z]+)?$/.exec(p);
+    if (pm) {
+      const [, id, sub] = pm;
+      if (!sub && m === "GET") return json(await F.getPost(env, account, id, now));
+      if (!sub && m === "DELETE") return json(await F.deletePost(env, account, id, now));
+      if (sub === "/comments" && m === "GET") return json(await F.comments(env, account, id, q));
+      if (sub === "/comments" && m === "POST") return json(await F.createComment(env, account, id, await readJson(request), now), 201);
+      if (sub === "/react" && m === "POST") return json(await F.react(env, account, id, await readJson(request), now));
+      if (sub === "/solve" && m === "POST") return json(await F.solve(env, account, id, await readJson(request), now));
+    }
+  }
   if (p.startsWith("/v2/me") || p.startsWith("/v2/auth/")) {
     const account = await A.authenticate(request, env, now);
     if (p === "/v2/me" && m === "GET") return json({ account: await D.withClaim(env, account, now) });

@@ -1,25 +1,22 @@
 package com.feed.client;
 
-import com.feed.Feed;
+import com.feed.client.account.AccountApi;
+import com.feed.client.account.AccountManager;
+import com.feed.client.account.ApiError;
 import com.feed.data.Comment;
 import com.feed.data.FeedResponse;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import com.feed.data.SolveResult;
-import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 
-import java.lang.reflect.Type;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -27,36 +24,13 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Async HTTP client for the Feed proxy. Callbacks run off-thread;
- * hop back with {@code Minecraft.getInstance().execute(...)}.
+ * Feed over MineFeed API v2 (account key, Discord forum behind the Worker).
+ * Keeps the old method shapes so the current screens work unchanged; the new UI will
+ * use /v2/sync directly. Callbacks run off-thread; hop back with Minecraft.execute.
  */
 public final class FeedApiClient {
 
     public static final FeedApiClient INSTANCE = new FeedApiClient();
-
-    private static final Gson GSON = new Gson();
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
-    private static final Type FEED_TYPE = new TypeToken<FeedResponse>() {}.getType();
-
-    // XOR-obfuscated APP_TOKEN (must match Worker secret). Regenerate via TokenGen.
-    private static final byte[] TOKEN_OBF = {
-            0x2F, 0x3D, 0x23, 0x3B, 0x29, 0x3E, 0x32, 0x3C,
-            0x68, 0x62, 0x6D, 0x6C, 0x69, 0x2E, 0x6D, 0x62, 0x6B,
-            0x2B, 0x3D, 0x2D, 0x3E, 0x32, 0x3C, 0x3D, 0x3B,
-            0x6D, 0x6C, 0x69, 0x2E, 0x2F, 0x23, 0x32, 0x2B,
-            0x3E, 0x2F, 0x33, 0x23, 0x2B, 0x3C, 0x2E, 0x68,
-            0x6D, 0x6C, 0x2C, 0x39, 0x29, 0x62, 0x23,
-            0x28, 0x2E, 0x6B, 0x68, 0x69, 0x3D, 0x2F, 0x32,
-            0x29, 0x2C, 0x22, 0x6D, 0x6C, 0x6B
-    };
-
-    private static final String PROXY_BASE =
-            "https:" + "//feed-proxy.kakouto4elovek.workers.dev";
-
-    private final HttpClient http = FeedHttp.CLIENT;
-
-    private volatile String feedEtag;
-    private final Map<String, String> commentEtags = new ConcurrentHashMap<>();
 
     public record ReactResult(Map<String, Integer> counts, String active) {}
 
@@ -75,159 +49,170 @@ public final class FeedApiClient {
 
     public record FeedPage(FeedResponse body, boolean notModified) {}
 
+    /** Server time of the last full first-page load, used as the /v2/sync cursor. */
+    private volatile long feedSince;
+    private final Map<String, Long> commentSince = new ConcurrentHashMap<>();
 
     private FeedApiClient() {
     }
 
-    private static String token() {
-        byte[] b = new byte[TOKEN_OBF.length];
-        for (int i = 0; i < b.length; i++) {
-            b[i] = (byte) (TOKEN_OBF[i] ^ 0x5A);
-        }
-        return new String(b, StandardCharsets.US_ASCII);
+    private static AccountApi api() {
+        return AccountManager.INSTANCE.api();
     }
 
-    private static void addPlayerIdentity(JsonObject body) {
-        var user = Minecraft.getInstance().getUser();
-        body.addProperty("author", user.getName());
-        body.addProperty("uuid", user.getProfileId().toString());
+    /** Was this written by the signed-in account? */
+    public static boolean isMine(String authorId) {
+        AccountApi.Account a = AccountManager.INSTANCE.account();
+        return authorId != null && a != null && authorId.equals(a.id());
     }
+
+    /**
+     * Interim avatar source until v2 avatars: own skin for own posts, otherwise the skin of a
+     * Minecraft player with the same name (mc-heads accepts names), or none.
+     */
+    public static String avatarKey(String authorId, String nick) {
+        if (isMine(authorId)) {
+            return Minecraft.getInstance().getUser().getProfileId().toString();
+        }
+        return nick != null && nick.matches("[A-Za-z0-9_]{3,16}") ? nick : null;
+    }
+
+    private CompletableFuture<JsonObject> call(String method, String path, JsonObject body) {
+        return api().call(method, path, body).handle((o, ex) -> {
+            if (ex == null) {
+                return o;
+            }
+            ApiError e = AccountApi.unwrap(ex);
+            Minecraft.getInstance().execute(() -> AccountManager.INSTANCE.handleError(e));
+            throw new CompletionException(e.isNetwork() ? new FeedApiException(e)
+                    : new FeedApiException(e.status, e.getMessage()));
+        });
+    }
+
+    // ---------- feed ----------
 
     public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine) {
         return fetchFeed(cursor, limit, tag, mine, false);
     }
 
+    /** fresh = live poll of the first page: asks /v2/sync first and reloads only on changes. */
     public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
-        StringBuilder url = new StringBuilder(base())
-                .append("/v1/feed?limit=").append(limit)
-                .append("&uuid=").append(Minecraft.getInstance().getUser().getProfileId().toString());
-        if (cursor != null && !cursor.isEmpty()) {
-            url.append("&cursor=").append(cursor);
+        boolean first = cursor == null || cursor.isEmpty();
+        if (fresh && first && feedSince > 0) {
+            return call("GET", "/v2/sync?space=global&since=" + feedSince, null).thenCompose(s -> {
+                boolean changed = bool(s, "reset") || s.getAsJsonArray("posts").size() > 0;
+                if (!changed) {
+                    feedSince = s.get("now").getAsLong();
+                    return CompletableFuture.completedFuture(new FeedPage(null, true));
+                }
+                return loadFeed(null, limit, mine);
+            });
         }
-        if (tag != null && !tag.isEmpty()) {
-            url.append("&tag=").append(URLEncoder.encode(tag, StandardCharsets.UTF_8));
+        return loadFeed(cursor, limit, mine);
+    }
+
+    private CompletableFuture<FeedPage> loadFeed(String cursor, int limit, boolean mine) {
+        StringBuilder path = new StringBuilder("/v2/feed?space=global&limit=").append(limit);
+        if (cursor != null && !cursor.isEmpty()) {
+            path.append("&before=").append(cursor);
         }
         if (mine) {
-            url.append("&mine=1");
+            path.append("&type=mine");
         }
-        if (fresh) {
-            url.append("&fresh=1");
-        }
-        HttpRequest.Builder req = builder(URI.create(url.toString()))
-                .timeout(REQUEST_TIMEOUT).GET();
-        if (fresh && feedEtag != null && (cursor == null || cursor.isEmpty()) && !mine
-                && (tag == null || tag.isEmpty())) {
-            req.header("If-None-Match", feedEtag);
-        }
-        return http.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString())
-                .thenApply(resp -> {
-                    if (resp.statusCode() == 304) {
-                        return new FeedPage(null, true);
-                    }
-                    resp.headers().firstValue("etag").ifPresent(e -> feedEtag = e);
-                    FeedResponse body = GSON.fromJson(checkBody(resp), FEED_TYPE);
-                    return new FeedPage(body, false);
-                });
+        boolean first = cursor == null || cursor.isEmpty();
+        return call("GET", path.toString(), null).thenApply(o -> {
+            if (first) {
+                feedSince = o.get("now").getAsLong();
+            }
+            FeedResponse r = new FeedResponse();
+            r.posts = new ArrayList<>();
+            for (JsonElement e : o.getAsJsonArray("posts")) {
+                r.posts.add(toPost(e.getAsJsonObject()));
+            }
+            r.nextCursor = str(o, "next");
+            return new FeedPage(r, false);
+        });
     }
 
     public CompletableFuture<Post> createPost(String text, PostType type) {
         JsonObject body = new JsonObject();
-        body.addProperty("text", text);
+        body.addProperty("space", "global");
         body.addProperty("type", type.id);
-        addPlayerIdentity(body);
-        return postRaw("/v1/posts", body.toString()).thenApply(resp -> {
-            JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
-            if (o.has("post")) {
-                return GSON.fromJson(o.get("post"), Post.class);
-            }
-            return GSON.fromJson(resp, Post.class);
+        body.addProperty("text", text);
+        return call("POST", "/v2/posts", body).thenApply(o -> toPost(o.getAsJsonObject("post")));
+    }
+
+    public CompletableFuture<ReactResult> toggleReaction(Post post, String key) {
+        List<String> keys = post.postType().reactions();
+        int slot = keys.indexOf(key);
+        if (slot < 0) {
+            return CompletableFuture.failedFuture(new FeedApiException(400, "bad_reaction"));
+        }
+        JsonObject body = new JsonObject();
+        body.addProperty("slot", slot);
+        return call("POST", "/v2/posts/" + post.id + "/react", body).thenApply(o -> {
+            JsonArray re = o.getAsJsonArray("reactions");
+            Map<String, Integer> counts = new HashMap<>();
+            counts.put(keys.get(0), re.get(0).getAsInt());
+            counts.put(keys.get(1), re.get(1).getAsInt());
+            int my = o.get("my").getAsInt();
+            return new ReactResult(counts, my >= 0 ? keys.get(my) : null);
         });
     }
 
-    public CompletableFuture<ReactResult> toggleReaction(String postId, String key) {
-        JsonObject body = new JsonObject();
-        body.addProperty("postId", postId);
-        body.addProperty("key", key);
-        addPlayerIdentity(body);
-        return postRaw("/v1/react", body.toString()).thenApply(resp -> {
-            JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
-            Map<String, Integer> counts = GSON.fromJson(o.get("counts"),
-                    new TypeToken<Map<String, Integer>>() {}.getType());
-            return new ReactResult(counts, FeedUtil.jstr(o, "active"));
-        });
+    public CompletableFuture<Post> fetchPost(String postId) {
+        return call("GET", "/v2/posts/" + postId, null).thenApply(o -> toPost(o.getAsJsonObject("post")));
     }
+
+    // ---------- comments ----------
 
     public CompletableFuture<CommentsPage> fetchComments(String postId, String before) {
-        return fetchComments(postId, before, false, false);
+        return fetchComments(postId, before, false);
     }
 
     public CompletableFuture<CommentsPage> fetchComments(String postId, String before, boolean fresh) {
-        return fetchComments(postId, before, fresh, false);
+        if (before == null || before.isEmpty()) {
+            return call("GET", "/v2/posts/" + postId, null).thenApply(o -> {
+                commentSince.put(postId, o.get("now").getAsLong());
+                return new CommentsPage(comments(o), str(o, "before"), false);
+            });
+        }
+        return call("GET", "/v2/posts/" + postId + "/comments?before=" + before, null)
+                .thenApply(o -> new CommentsPage(comments(o), str(o, "before"), false));
     }
 
-    /** Live poll only — may return 304 when comments unchanged. */
+    /** Live poll: only new comments since the last load (notModified when none). */
     public CompletableFuture<CommentsPage> fetchCommentsIfCached(String postId) {
-        return fetchComments(postId, null, true, true);
-    }
-
-    private CompletableFuture<CommentsPage> fetchComments(
-            String postId, String before, boolean fresh, boolean useEtag) {
-        StringBuilder path = new StringBuilder("/v1/posts/").append(postId).append("/comments");
-        boolean first = true;
-        if (before != null && !before.isEmpty()) {
-            path.append(first ? "?" : "&").append("before=").append(before);
-            first = false;
+        Long since = commentSince.get(postId);
+        if (since == null) {
+            return fetchComments(postId, null, true);
         }
-        if (fresh) {
-            path.append(first ? "?" : "&").append("fresh=1");
-        }
-        HttpRequest.Builder req = builder(URI.create(base() + path))
-                .timeout(REQUEST_TIMEOUT).GET();
-        if (fresh && before == null && useEtag) {
-            String etag = commentEtags.get(postId);
-            if (etag != null) {
-                req.header("If-None-Match", etag);
+        return call("GET", "/v2/sync?space=global&since=" + since + "&post=" + postId, null).thenApply(s -> {
+            commentSince.put(postId, s.get("now").getAsLong());
+            List<Comment> fresh = new ArrayList<>();
+            for (JsonElement e : s.getAsJsonArray("comments")) {
+                JsonObject c = e.getAsJsonObject();
+                if (!bool(c, "deleted")) {
+                    fresh.add(toComment(c));
+                }
             }
-        }
-        return http.sendAsync(req.build(), HttpResponse.BodyHandlers.ofString())
-                .thenApply(resp -> {
-                    if (resp.statusCode() == 304) {
-                        return new CommentsPage(null, null, true);
-                    }
-                    resp.headers().firstValue("etag").ifPresent(e -> commentEtags.put(postId, e));
-                    JsonObject o = JsonParser.parseString(checkBody(resp)).getAsJsonObject();
-                    List<Comment> list = GSON.fromJson(o.get("comments"),
-                            new TypeToken<List<Comment>>() {}.getType());
-                    return new CommentsPage(list, FeedUtil.jstr(o, "nextBefore"), false);
-                });
+            return fresh.isEmpty() ? new CommentsPage(null, null, true) : new CommentsPage(fresh, null, false);
+        });
     }
 
     public CompletableFuture<Comment> createComment(String postId, String text) {
         JsonObject body = new JsonObject();
         body.addProperty("text", text);
-        addPlayerIdentity(body);
-        return postRaw("/v1/posts/" + postId + "/comments", body.toString())
-                .thenApply(resp -> {
-                    JsonObject o = JsonParser.parseString(resp).getAsJsonObject();
-                    JsonObject c = o.has("comment") ? o.getAsJsonObject("comment") : o;
-                    Comment comment = GSON.fromJson(c, Comment.class);
-                    if (comment != null) {
-                        comment.fromMod = true;
-                    }
-                    return comment;
-                });
+        return call("POST", "/v2/posts/" + postId + "/comments", body)
+                .thenApply(o -> toComment(o.getAsJsonObject("comment")));
     }
 
     public CompletableFuture<Void> deletePost(String postId) {
-        JsonObject body = new JsonObject();
-        addPlayerIdentity(body);
-        return deleteRaw("/v1/posts/" + postId, body.toString());
+        return call("DELETE", "/v2/posts/" + postId, null).thenApply(o -> null);
     }
 
     public CompletableFuture<Void> deleteComment(String postId, String commentId) {
-        JsonObject body = new JsonObject();
-        addPlayerIdentity(body);
-        return deleteRaw("/v1/posts/" + postId + "/comments/" + commentId, body.toString());
+        return call("DELETE", "/v2/comments/" + commentId, null).thenApply(o -> null);
     }
 
     public CompletableFuture<Void> report(String postId, String commentId, String reason) {
@@ -236,80 +221,111 @@ public final class FeedApiClient {
         if (commentId != null) {
             body.addProperty("commentId", commentId);
         }
-        if (reason != null) {
-            body.addProperty("reason", reason);
-        }
-        addPlayerIdentity(body);
-        return postRaw("/v1/report", body.toString()).thenApply(r -> null);
+        body.addProperty("reason", reason == null || reason.isBlank() ? "—" : reason);
+        return call("POST", "/v2/reports", body).thenApply(o -> null);
     }
 
     public CompletableFuture<SolveResult> solve(String postId) {
-        JsonObject body = new JsonObject();
-        addPlayerIdentity(body);
-        return postRaw("/v1/posts/" + postId + "/solve", body.toString())
-                .thenApply(resp -> GSON.fromJson(resp, SolveResult.class));
-    }
-
-    public CompletableFuture<Post> fetchPost(String postId) {
-        String uuid = Minecraft.getInstance().getUser().getProfileId().toString();
-        return getRaw("/v1/posts/" + postId + "?uuid=" + uuid).thenApply(bodyStr -> {
-            JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-            return GSON.fromJson(o.get("post"), Post.class);
+        return call("POST", "/v2/posts/" + postId + "/solve", new JsonObject()).thenApply(o -> {
+            SolveResult r = new SolveResult();
+            r.ok = true;
+            r.post = toPost(o.getAsJsonObject("post"));
+            return r;
         });
     }
 
+    // ---------- notifications ----------
+
+    /** Newest first; {@code after} is filtered by the poller itself. uuid is unused in v2. */
     public CompletableFuture<NotificationsResult> fetchNotifications(String uuid, String after) {
-        String path = "/v1/notifications?uuid=" + uuid
-                + (after == null || after.isEmpty() ? "" : "&after=" + after);
-        return getRaw(path).thenApply(bodyStr -> {
-            JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-            List<Notif> list = GSON.fromJson(o.get("notifications"),
-                    new TypeToken<List<Notif>>() {}.getType());
-            return new NotificationsResult(list, FeedUtil.jstr(o, "latest"));
+        return call("GET", "/v2/notifications", null).thenApply(o -> {
+            List<Notif> list = new ArrayList<>();
+            long latest = 0;
+            for (JsonElement e : o.getAsJsonArray("items")) {
+                JsonObject n = e.getAsJsonObject();
+                long id = n.get("id").getAsLong();
+                latest = Math.max(latest, id);
+                JsonObject actor = n.getAsJsonObject("actor");
+                String kind = str(n, "kind");
+                String text = "react".equals(kind)
+                        ? Component.translatable("feed.notif.react", n.get("count").getAsInt()).getString()
+                        : str(n, "text");
+                list.add(new Notif(String.valueOf(id), str(n, "postId"), str(n, "postText"),
+                        actorName(actor), text, iso(n.get("updatedAt").getAsLong())));
+            }
+            return new NotificationsResult(list, latest > 0 ? String.valueOf(latest) : null);
         });
     }
 
+    /** Hashtags are gone in v2. */
     public CompletableFuture<List<TagCount>> fetchTags(String q) {
-        String path = "/v1/tags";
-        if (q != null && !q.isBlank()) {
-            path += "?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8);
+        return CompletableFuture.completedFuture(List.of());
+    }
+
+    // ---------- mapping ----------
+
+    private static Post toPost(JsonObject o) {
+        Post p = new Post();
+        p.id = str(o, "id");
+        p.type = str(o, "type");
+        p.text = str(o, "text");
+        JsonObject a = o.getAsJsonObject("author");
+        p.author = actorName(a);
+        p.fromDiscord = bool(a, "discord");
+        p.uuid = str(a, "id");
+        p.authorTag = str(a, "tag");
+        p.createdAt = iso(o.get("createdAt").getAsLong());
+        p.commentCount = o.get("comments").getAsInt();
+        List<String> keys = p.postType().reactions();
+        JsonArray re = o.getAsJsonArray("reactions");
+        p.reactions.put(keys.get(0), re.get(0).getAsInt());
+        p.reactions.put(keys.get(1), re.get(1).getAsInt());
+        int my = o.has("my") ? o.get("my").getAsInt() : -1;
+        p.myReaction = my >= 0 && my < 2 ? keys.get(my) : null;
+        p.tags = List.of();
+        p.solved = bool(o, "solved");
+        return p;
+    }
+
+    private static List<Comment> comments(JsonObject o) {
+        List<Comment> list = new ArrayList<>();
+        for (JsonElement e : o.getAsJsonArray("comments")) {
+            list.add(toComment(e.getAsJsonObject()));
         }
-        return getRaw(path).thenApply(bodyStr -> {
-            JsonObject o = JsonParser.parseString(bodyStr).getAsJsonObject();
-            return GSON.fromJson(o.get("tags"), new TypeToken<List<TagCount>>() {}.getType());
-        });
+        return list;
     }
 
-    private CompletableFuture<String> getRaw(String path) {
-        return http.sendAsync(builder(URI.create(base() + path))
-                        .timeout(REQUEST_TIMEOUT).GET().build(),
-                HttpResponse.BodyHandlers.ofString()).thenApply(this::checkBody);
+    private static Comment toComment(JsonObject o) {
+        Comment c = new Comment();
+        c.id = str(o, "id");
+        c.text = str(o, "text");
+        JsonObject a = o.getAsJsonObject("author");
+        c.author = actorName(a);
+        c.fromMod = !bool(a, "discord");
+        c.authorId = str(a, "id");
+        c.authorTag = str(a, "tag");
+        c.createdAt = iso(o.get("createdAt").getAsLong());
+        return c;
     }
 
-    private CompletableFuture<String> postRaw(String path, String body) {
-        return http.sendAsync(builder(URI.create(base() + path))
-                        .timeout(REQUEST_TIMEOUT)
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString()).thenApply(this::checkBody);
+    private static String actorName(JsonObject a) {
+        if (a == null) {
+            return "?";
+        }
+        String nick = str(a, "nick");
+        return nick == null || nick.isEmpty() ? "?" : nick;
     }
 
-    private CompletableFuture<Void> deleteRaw(String path, String body) {
-        return http.sendAsync(builder(URI.create(base() + path))
-                        .timeout(REQUEST_TIMEOUT)
-                        .header("Content-Type", "application/json")
-                        .method("DELETE", HttpRequest.BodyPublishers.ofString(body))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString())
-                .thenApply(resp -> {
-                    checkBody(resp);
-                    return null;
-                });
+    private static String iso(long ms) {
+        return Instant.ofEpochMilli(ms).toString();
     }
 
-    private static HttpRequest.Builder builder(URI uri) {
-        return HttpRequest.newBuilder(uri).header("X-Feed-Token", token());
+    private static String str(JsonObject o, String k) {
+        return o != null && o.has(k) && o.get(k).isJsonPrimitive() ? o.get(k).getAsString() : null;
+    }
+
+    private static boolean bool(JsonObject o, String k) {
+        return o != null && o.has(k) && o.get(k).isJsonPrimitive() && o.get(k).getAsBoolean();
     }
 
     public static FeedApiException unwrap(Throwable ex) {
@@ -317,33 +333,5 @@ public final class FeedApiClient {
             ex = ex.getCause();
         }
         return ex instanceof FeedApiException fae ? fae : new FeedApiException(ex);
-    }
-
-    private String checkBody(HttpResponse<String> resp) {
-        int code = resp.statusCode();
-        if (code < 200 || code >= 300) {
-            throw new CompletionException(
-                    new FeedApiException(code, errorMessage(resp.body())));
-        }
-        return resp.body();
-    }
-
-    private static String base() {
-        return PROXY_BASE;
-    }
-
-    private static String errorMessage(String body) {
-        if (body == null || body.isBlank()) {
-            return "";
-        }
-        try {
-            JsonObject map = JsonParser.parseString(body).getAsJsonObject();
-            if (map.has("error") && !map.get("error").isJsonNull()) {
-                return map.get("error").getAsString();
-            }
-        } catch (Exception e) {
-            Feed.LOG.debug("error parse failed", e);
-        }
-        return body.length() > 200 ? body.substring(0, 200) : body;
     }
 }

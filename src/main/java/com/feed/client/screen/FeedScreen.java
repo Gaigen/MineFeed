@@ -468,7 +468,7 @@ public class FeedScreen extends RetroScreen {
 
         int ax = x + PAD;
         int ay = y + PAD;
-        ResourceLocation avatar = AvatarCache.get(post.uuid);
+        ResourceLocation avatar = AvatarCache.get(FeedApiClient.avatarKey(post.uuid, post.author));
         if (avatar != null) {
             g.blit(avatar, ax, ay, 0, 0, 16, 16, 16, 16);
         } else {
@@ -676,8 +676,7 @@ public class FeedScreen extends RetroScreen {
     }
 
     private boolean isOwn(Post post) {
-        return post.uuid != null
-                && post.uuid.equalsIgnoreCase(this.minecraft.getUser().getProfileId().toString());
+        return FeedApiClient.isMine(post.uuid);
     }
 
     private boolean clickInsideCard(Row row, int x, int y, double mouseX, double mouseY) {

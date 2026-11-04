@@ -1,0 +1,21 @@
+[Unit]
+Description=MineFeed Discord relay bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minefeed
+WorkingDirectory=/opt/minefeed-bot
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/minefeed-bot
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

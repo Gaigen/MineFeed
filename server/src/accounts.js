@@ -12,6 +12,9 @@ export const LIMITS = {
   recover: { max: 10, windowMs: 3_600_000 },  // per IP per hour
   discordStart: { max: 20, windowMs: 3_600_000 }, // per IP per hour
   authFail: { max: 30, windowMs: 600_000 },   // bad keys per IP per 10 min
+  post: { max: 10, windowMs: 3_600_000 },     // per account per hour
+  comment: { max: 60, windowMs: 3_600_000 },  // per account per hour
+  report: { max: 10, windowMs: 3_600_000 },   // per account per hour
 };
 
 export async function rateLimit(env, name, id, now) {
@@ -42,6 +45,7 @@ export function publicAccount(a, now) {
     discordLinked: !!a.discord_id,
     discordUsername: a.discord_username || null,
     lostTag: a.lost_tag || null,
+    moderator: !!a.moderator,
     canChangeTagAt: nextTagChange && nextTagChange > now ? nextTagChange : null,
   };
 }

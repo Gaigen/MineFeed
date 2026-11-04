@@ -135,6 +135,11 @@ public final class AccountApi {
         return send("POST", "/v2/auth/logout", new JsonObject(), true).thenApply(j -> null);
     }
 
+    /** Authenticated JSON call for the other v2 modules (feed, notifications). */
+    public CompletableFuture<JsonObject> call(String method, String path, JsonObject body) {
+        return send(method, path, body, true).thenApply(JsonElement::getAsJsonObject);
+    }
+
     private static Session session(JsonElement j) {
         JsonObject o = j.getAsJsonObject();
         return new Session(GSON.fromJson(o.get("account"), Account.class),

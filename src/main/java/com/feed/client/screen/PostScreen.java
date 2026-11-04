@@ -110,8 +110,7 @@ public class PostScreen extends RetroScreen {
     }
 
     private boolean isOwn() {
-        return post.uuid != null && !post.uuid.isEmpty()
-                && post.uuid.equalsIgnoreCase(this.minecraft.getUser().getProfileId().toString());
+        return FeedApiClient.isMine(post.uuid);
     }
 
     private void applySolvedState() {
@@ -411,7 +410,7 @@ public class PostScreen extends RetroScreen {
         int ay = y + PAD;
         int skinW = AvatarCache.BODY_W;
         int skinH = AvatarCache.BODY_H;
-        ResourceLocation skin = AvatarCache.get(post.uuid, AvatarCache.Kind.BODY);
+        ResourceLocation skin = AvatarCache.get(FeedApiClient.avatarKey(post.uuid, post.author), AvatarCache.Kind.BODY);
         if (skin != null) {
             g.blit(skin, ax, ay, 0, 0, skinW, skinH, skinW, skinH);
         } else {
@@ -459,8 +458,7 @@ public class PostScreen extends RetroScreen {
         Comment c = row.comment();
         g.fill(x, y, x + 2, y + row.height(), RetroUi.SHADOW);
 
-        boolean own = c.fromMod && c.author != null
-                && c.author.equals(this.minecraft.getUser().getName());
+        boolean own = FeedApiClient.isMine(c.authorId);
         int nameColor = own ? RetroUi.ACCENT : (c.fromMod ? RetroUi.FG : RetroUi.GRAY);
         String author = c.author == null || c.author.isEmpty() ? "?" : c.author;
         g.drawString(this.font, author, x + 8, y + 3, nameColor, false);
