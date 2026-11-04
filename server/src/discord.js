@@ -3,6 +3,7 @@
 import { HttpError, base64url, randomBytes, sha256Hex, clientIp } from "./util.js";
 import { rateLimit, publicAccount, newSession } from "./accounts.js";
 import { normalizeTag, tagProblem } from "./names.js";
+import { syncRoles } from "./communities.js";
 
 const DISCORD = "https:" + "//discord.com";
 export const FLOW_TTL = 10 * 60_000;
@@ -174,6 +175,8 @@ export async function callback(request, env, now) {
     }
     throw e;
   }
+  if (acc.discord_id && acc.discord_id !== user.id) await syncRoles(env, acc.id, acc.discord_id, false);
+  await syncRoles(env, acc.id, user.id, true);
   await finish(env, state, "done");
   return say(request, 200, "link_ok", { tag: acc.tag });
 }
@@ -202,6 +205,7 @@ export async function poll(env, body, now) {
 
 /** DELETE /v2/me/discord */
 export async function unlink(env, account, now) {
+  if (account.discord_id) await syncRoles(env, account.id, account.discord_id, false);
   await env.DB.prepare("UPDATE accounts SET discord_id = NULL, discord_username = NULL, tag_protected = 0 WHERE id = ?")
     .bind(account.id).run();
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();

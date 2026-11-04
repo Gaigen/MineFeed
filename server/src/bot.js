@@ -4,6 +4,7 @@ import { HttpError, sha256Hex } from "./util.js";
 import { snowflakeTime } from "./dapi.js";
 import { TYPES, MAX_POST, markPostDeleted, markCommentDeleted } from "./feed.js";
 import * as N from "./notify.js";
+import * as C from "./communities.js";
 
 const MAX_EVENTS = 100;
 const MAX_DISCORD_TEXT = 1000;
@@ -78,7 +79,7 @@ async function onMessage(env, d, ctx, now) {
     return r.meta.changes ? "post" : "dup";
   }
 
-  const post = await env.DB.prepare("SELECT id, author_id, deleted FROM posts WHERE id = ?").bind(d.channel_id).first();
+  const post = await env.DB.prepare("SELECT id, space, author_id, deleted FROM posts WHERE id = ?").bind(d.channel_id).first();
   if (!post || post.deleted) return "skip";
   const r = await env.DB.prepare(
     `INSERT OR IGNORE INTO comments (id, post_id, author_id, ext_name, text, image, created_at, updated_at)
@@ -87,11 +88,11 @@ async function onMessage(env, d, ctx, now) {
   if (!r.meta.changes) return "dup";
   await env.DB.prepare("UPDATE posts SET comments = comments + 1, updated_at = ? WHERE id = ?").bind(now, post.id).run();
   const skip = [];
-  if (post.author_id && (!acc || acc.id !== post.author_id)) {
+  if (post.author_id && (!acc || acc.id !== post.author_id) && await N.isReader(env, post.space, post.author_id)) {
     await N.add(env, { to: post.author_id, kind: "comment", postId: post.id, commentId: d.id, actor, text: text || "🖼" }, now);
     skip.push(post.author_id);
   }
-  if (text) await N.mentions(env, actor, text, { postId: post.id, commentId: d.id, skip }, now);
+  if (text) await N.mentions(env, actor, text, { postId: post.id, commentId: d.id, space: post.space, skip }, now);
   return "comment";
 }
 
@@ -142,6 +143,10 @@ export async function events(env, body, now) {
           r = "bulk"; break;
         case "THREAD_DELETE": await markPostDeleted(env, String(d.id), now); r = "post"; break;
         case "THREAD_UPDATE": r = await onThreadUpdate(env, d, now); break;
+        case "MEMBER_JOIN": { // a player with a linked Discord joined the server: give community roles
+          const acc = await env.DB.prepare("SELECT id FROM accounts WHERE discord_id = ?").bind(String(d.discordId)).first();
+          r = acc ? `roles:${await C.syncRoles(env, acc.id, String(d.discordId), true)}` : "skip"; break;
+        }
         case "MODERATOR": {
           const u = await env.DB.prepare("UPDATE accounts SET moderator = ? WHERE discord_id = ?").bind(d.moderator ? 1 : 0, String(d.discordId)).run();
           r = u.meta.changes ? "moderator" : "skip"; break;

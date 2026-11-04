@@ -17,9 +17,16 @@ function actorName(actor) {
 /** One notification (comment, mention, ...). actor: account row or {ext_name}. */
 export async function add(env, n, now) {
   await env.DB.prepare(
-    `INSERT INTO notifications (account_id, kind, post_id, comment_id, actor_id, actor_name, text, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(n.to, n.kind, n.postId || null, n.commentId || null, n.actor.id || null, actorName(n.actor), quote(n.text), now, now).run();
+    `INSERT INTO notifications (account_id, kind, post_id, comment_id, community_id, actor_id, actor_name, text, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(n.to, n.kind, n.postId || null, n.commentId || null, n.communityId || null, n.actor.id || null, actorName(n.actor), quote(n.text), now, now).run();
+}
+
+/** Can this account still read the space? (people who left a community get nothing from it) */
+export async function isReader(env, space, accountId) {
+  if (!space || space === "global") return true;
+  const m = await env.DB.prepare("SELECT 1 AS x FROM members WHERE community_id = ? AND account_id = ?").bind(space, accountId).first();
+  return !!m;
 }
 
 /** "X and N others reacted to your post" — one row per post, bumped on each new reaction. */
@@ -37,9 +44,11 @@ const MENTION = /(?:^|[^a-z0-9_.@])@([a-z0-9_.]{2,32})/gi;
 export async function mentions(env, actor, text, where, now) {
   const tags = [...new Set([...String(text).matchAll(MENTION)].map((m) => m[1].toLowerCase().replace(/\.+$/, "")))].slice(0, 5);
   if (!tags.length) return;
+  const space = where.space || "global";
   const { results } = await env.DB.prepare(
-    `SELECT id FROM accounts WHERE banned = 0 AND tag IN (${tags.map(() => "?").join(",")})`
-  ).bind(...tags).all();
+    `SELECT a.id FROM accounts a WHERE a.banned = 0 AND a.tag IN (${tags.map(() => "?").join(",")})
+       AND (? = 'global' OR EXISTS (SELECT 1 FROM members m WHERE m.community_id = ? AND m.account_id = a.id))`
+  ).bind(...tags, space, space).all();
   for (const r of results) {
     if (r.id === actor.id || where.skip.includes(r.id)) continue;
     await add(env, { to: r.id, kind: "mention", postId: where.postId, commentId: where.commentId, actor, text }, now);
@@ -52,6 +61,8 @@ function out(r, seenAt) {
     kind: r.kind,
     postId: r.post_id,
     commentId: r.comment_id,
+    communityId: r.community_id || null,
+    communityName: r.community_name || null,
     actor: r.actor_id ? { id: r.actor_id, tag: r.a_tag || null, nick: r.a_nick || r.actor_name } : { discord: true, nick: r.actor_name },
     count: r.count,
     text: r.text,
@@ -63,7 +74,9 @@ function out(r, seenAt) {
 }
 
 const SELECT = `SELECT n.*, a.tag AS a_tag, a.nick AS a_nick, substr(p.text, 1, ${QUOTE}) AS post_text
-  FROM notifications n LEFT JOIN accounts a ON a.id = n.actor_id LEFT JOIN posts p ON p.id = n.post_id`;
+  , cm.name AS community_name
+  FROM notifications n LEFT JOIN accounts a ON a.id = n.actor_id LEFT JOIN posts p ON p.id = n.post_id
+  LEFT JOIN communities cm ON cm.id = n.community_id`;
 
 async function unread(env, account) {
   const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM notifications WHERE account_id = ? AND updated_at > ?")

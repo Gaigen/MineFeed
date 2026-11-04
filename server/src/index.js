@@ -6,6 +6,7 @@ import * as D from "./discord.js";
 import * as F from "./feed.js";
 import * as N from "./notify.js";
 import * as B from "./bot.js";
+import * as C from "./communities.js";
 
 const API = 2;
 
@@ -61,7 +62,7 @@ export async function route(request, env, now) {
 
   // everything below needs an account
   if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
-      || p.startsWith("/v2/notifications") || p === "/v2/reports") {
+      || p.startsWith("/v2/notifications") || p === "/v2/reports" || p.startsWith("/v2/communities") || p === "/v2/join") {
     const account = await A.authenticate(request, env, now);
     const q = url.searchParams;
     if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
@@ -70,6 +71,27 @@ export async function route(request, env, now) {
     if (p === "/v2/reports" && m === "POST") return json(await F.report(env, account, await readJson(request), now));
     if (p === "/v2/notifications" && m === "GET") return json(await N.list(env, account, q));
     if (p === "/v2/notifications/seen" && m === "POST") return json(await N.seen(env, account, await readJson(request), now));
+    if (p === "/v2/join" && m === "POST") return json(await C.join(request, env, account, await readJson(request), now));
+    if (p === "/v2/communities" && m === "GET") return json(await C.mine(env, account));
+    if (p === "/v2/communities" && m === "POST") return json(await C.create(env, account, await readJson(request), now), 201);
+    const cc = /^\/v2\/communities\/([a-z0-9]{6,16})(?:\/(codes|requests|members|leave)(?:\/([^/]{1,64}))?)?$/.exec(p);
+    if (cc) {
+      const [, cid, sub, arg] = cc;
+      const key = arg ? decodeURIComponent(arg) : null;
+      if (!sub && m === "GET") return json(await C.get(env, account, cid));
+      if (!sub && m === "PATCH") return json(await C.update(env, account, cid, await readJson(request)));
+      if (!sub && m === "DELETE") return json(await C.remove(env, account, cid, now));
+      if (sub === "leave" && !key && m === "POST") return json(await C.leave(env, account, cid));
+      if (sub === "codes" && !key && m === "GET") return json(await C.listCodes(env, account, cid, now));
+      if (sub === "codes" && !key && m === "POST") return json(await C.createCode(env, account, cid, await readJson(request), now), 201);
+      if (sub === "codes" && key && m === "PATCH") return json(await C.updateCode(env, account, cid, key, await readJson(request), now));
+      if (sub === "codes" && key && m === "DELETE") return json(await C.revokeCode(env, account, cid, key));
+      if (sub === "requests" && !key && m === "GET") return json(await C.listRequests(env, account, cid));
+      if (sub === "requests" && key && m === "POST") return json(await C.decide(env, account, cid, key, await readJson(request), now));
+      if (sub === "members" && !key && m === "GET") return json(await C.listMembers(env, account, cid));
+      if (sub === "members" && key && m === "PATCH") return json(await C.setMemberRole(env, account, cid, key, await readJson(request)));
+      if (sub === "members" && key && m === "DELETE") return json(await C.kick(env, account, cid, key, q.get("ban") === "1", now));
+    }
     const cm = /^\/v2\/comments\/(\d{1,20})$/.exec(p);
     if (cm && m === "DELETE") return json(await F.deleteComment(env, account, cm[1], now));
     const pm = /^\/v2\/posts\/(\d{1,20})(\/[a-z]+)?$/.exec(p);

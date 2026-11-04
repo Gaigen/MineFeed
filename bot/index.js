@@ -29,6 +29,11 @@ let forwarded = 0;
 client.on("raw", (packet) => {
   const { t, d } = packet;
   if (!t || !d) return;
+  if (t === "GUILD_MEMBER_ADD") {
+    // linked MineFeed players get their community roles when they join the server
+    if (d.guild_id === GUILD_ID && d.user && !d.user.bot) relay.push("MEMBER_JOIN", { discordId: d.user.id });
+    return;
+  }
   if (t === "GUILD_MEMBER_UPDATE") {
     if (MOD_ROLE_ID && d.guild_id === GUILD_ID && d.user) {
       relay.push("MODERATOR", { discordId: d.user.id, moderator: (d.roles || []).includes(MOD_ROLE_ID) });

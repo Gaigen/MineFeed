@@ -57,6 +57,14 @@ export function recoveryCode() {
   return out;
 }
 
+/** Random chars from the no-0/O/1/I alphabet. */
+export function randomCode(n) {
+  const bytes = randomBytes(n);
+  let out = "";
+  for (let i = 0; i < n; i++) out += B32[bytes[i] & 31];
+  return out;
+}
+
 export function normalizeRecovery(code) {
   return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }

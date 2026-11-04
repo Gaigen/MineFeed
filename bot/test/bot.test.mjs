@@ -5,6 +5,7 @@ import { makeFilter } from "../filter.js";
 
 const chans = {
   cat: { type: 4 }, forum: { type: 15, parentId: "cat" }, other: { type: 15, parentId: "x" },
+  cat2: { type: 4, name: "MineFeed communities 2" }, forum2: { type: 15, parentId: "cat2" }, th3: { type: 11, parentId: "forum2" },
   th: { type: 11, parentId: "forum", name: "Hello", appliedTags: ["t1"] }, th2: { type: 11, parentId: "other" }, text: { type: 0, parentId: "cat" },
 };
 const filter = makeFilter({ guildId: "g", categories: ["cat"], channels: (id) => chans[id] });
@@ -13,6 +14,7 @@ test("filter keeps feed-forum events only", () => {
   const msg = (channel_id, id = "m1") => ({ guild_id: "g", id, channel_id, content: "hi", author: { id: "u", username: "u" } });
   assert.ok(filter("MESSAGE_CREATE", msg("th")));
   assert.equal(filter("MESSAGE_CREATE", msg("th2")), null);
+  assert.ok(filter("MESSAGE_CREATE", msg("th3")));
   assert.equal(filter("MESSAGE_CREATE", msg("text")), null);
   assert.equal(filter("MESSAGE_CREATE", { ...msg("th"), guild_id: "other" }), null);
   assert.ok(filter("MESSAGE_CREATE", msg("unknown-archived")));

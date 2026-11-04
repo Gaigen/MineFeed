@@ -72,11 +72,15 @@ export async function getSpace(env, id) {
   return row;
 }
 
-/** Who may read/write a space. Communities will check membership here. */
+/** Who may read/write a space: everyone for the global feed, members for a community. */
 async function spaceFor(env, account, id) {
   const sid = String(id || "global");
-  if (sid !== "global") throw new HttpError(404, "no_space", "Сообщество не найдено");
-  return getSpace(env, sid);
+  if (sid === "global") return { ...(await getSpace(env, sid)), role: null };
+  const m = await env.DB.prepare(
+    "SELECT m.role FROM members m JOIN communities c ON c.id = m.community_id WHERE m.community_id = ? AND m.account_id = ? AND c.deleted = 0"
+  ).bind(sid, account.id).first();
+  if (!m) throw new HttpError(404, "no_space", "Сообщество не найдено");
+  return { ...(await getSpace(env, sid)), role: m.role };
 }
 
 async function postAs(env, space, account, payload, threadId) {
@@ -163,8 +167,19 @@ async function loadPost(env, id) {
   return row;
 }
 
-function canModerate(account, authorId) {
-  return account.id === authorId || !!account.moderator;
+/** Author, server moderator, or owner/mod of the community the post is in. */
+function canModerate(account, authorId, space) {
+  return account.id === authorId || !!account.moderator || (space && (space.role === "owner" || space.role === "mod"));
+}
+
+/** Space check that lets server moderators act on posts they can't otherwise open. */
+async function spaceForModeration(env, account, id) {
+  try {
+    return await spaceFor(env, account, id);
+  } catch (e) {
+    if (account.moderator && e.code === "no_space") return { id, role: null };
+    throw e;
+  }
 }
 
 // ---------- reading ----------
@@ -183,6 +198,9 @@ export async function feed(env, account, q, now) {
   const { results } = await env.DB.prepare(
     `${POST_SELECT} WHERE ${where.join(" AND ")} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
   ).bind(...binds, limit + 1).all();
+  if (!before && space.id !== "global") {
+    await env.DB.prepare("UPDATE members SET read_at = ? WHERE community_id = ? AND account_id = ?").bind(now, space.id, account.id).run();
+  }
   const more = results.length > limit;
   const rows = results.slice(0, limit);
   return { posts: await postsOut(env, account, rows), next: more ? cursorOf(rows[rows.length - 1]) : null, now };
@@ -225,13 +243,14 @@ export async function sync(env, account, q, now) {
   const since = intParam(q.get("since"), 0, 0, now);
   const interval = { open: intParam(env.SYNC_OPEN, 12, 5, 600), closed: intParam(env.SYNC_CLOSED, 120, 30, 3600) };
   const notifications = await N.changes(env, account, since ? since - SYNC_OVERLAP : 0);
-  if (!since || now - since > SYNC_MAX_AGE) return { now, reset: true, posts: [], comments: [], notifications, interval };
+  const communities = await unreadCounts(env, account);
+  if (!since || now - since > SYNC_MAX_AGE) return { now, reset: true, posts: [], comments: [], notifications, communities, interval };
   const from = since - SYNC_OVERLAP;
   const { results } = await env.DB.prepare(
     `${POST_SELECT} WHERE p.space = ? AND p.updated_at > ? ORDER BY p.updated_at LIMIT 101`
   ).bind(space.id, from).all();
-  if (results.length > 100) return { now, reset: true, posts: [], comments: [], notifications, interval };
-  const out = { now, reset: false, posts: await postsOut(env, account, results), comments: [], notifications, interval };
+  if (results.length > 100) return { now, reset: true, posts: [], comments: [], notifications, communities, interval };
+  const out = { now, reset: false, posts: await postsOut(env, account, results), comments: [], notifications, communities, interval };
   const postId = q.get("post");
   if (postId && /^\d{1,20}$/.test(postId)) {
     const c = await env.DB.prepare(
@@ -240,6 +259,17 @@ export async function sync(env, account, q, now) {
     out.comments = c.results.slice(0, 100).map(commentOut);
   }
   return out;
+}
+
+/** [{id, unread}] for every community the player is in (new posts by others since last open). */
+async function unreadCounts(env, account) {
+  const { results } = await env.DB.prepare(
+    `SELECT m.community_id AS id,
+       (SELECT COUNT(*) FROM posts p WHERE p.space = m.community_id AND p.deleted = 0 AND p.created_at > m.read_at
+          AND (p.author_id IS NULL OR p.author_id <> m.account_id)) AS unread
+     FROM members m WHERE m.account_id = ?`
+  ).bind(account.id).all();
+  return results;
 }
 
 // ---------- writing ----------
@@ -260,7 +290,7 @@ export async function createPost(env, account, body, now) {
   await env.DB.prepare(
     "INSERT INTO posts (id, space, author_id, type, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).bind(id, space.id, account.id, body.type, text, now, now).run();
-  await N.mentions(env, account, text, { postId: id, skip: [] }, now);
+  await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
   return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
 }
 
@@ -286,11 +316,11 @@ export async function createComment(env, account, id, body, now) {
     env.DB.prepare("UPDATE posts SET comments = comments + 1, updated_at = ? WHERE id = ?").bind(now, post.id),
   ]);
   const notified = [];
-  if (post.author_id && post.author_id !== account.id) {
+  if (post.author_id && post.author_id !== account.id && await N.isReader(env, post.space, post.author_id)) {
     await N.add(env, { to: post.author_id, kind: "comment", postId: post.id, commentId: msg.id, actor: account, text }, now);
     notified.push(post.author_id);
   }
-  await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, skip: notified }, now);
+  await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, space: post.space, skip: notified }, now);
   const row = await env.DB.prepare(`${COMMENT_SELECT} WHERE c.id = ?`).bind(msg.id).first();
   return { comment: commentOut(row) };
 }
@@ -302,7 +332,8 @@ export async function markPostDeleted(env, id, now) {
 /** DELETE /v2/posts/:id — author or moderator. */
 export async function deletePost(env, account, id, now) {
   const post = await loadPost(env, id);
-  if (!canModerate(account, post.author_id)) throw new HttpError(403, "forbidden", "Можно удалять только свои посты");
+  const space = await spaceForModeration(env, account, post.space);
+  if (!canModerate(account, post.author_id, space)) throw new HttpError(403, "forbidden", "Можно удалять только свои посты");
   await dapi(env, "DELETE", `/channels/${post.id}`, { allow404: true });
   await markPostDeleted(env, post.id, now);
   return { ok: true };
@@ -313,8 +344,9 @@ export async function deleteComment(env, account, id, now) {
   if (!/^\d{1,20}$/.test(String(id))) throw new HttpError(404, "no_comment", "Комментарий не найден");
   const c = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND deleted = 0").bind(id).first();
   if (!c) throw new HttpError(404, "no_comment", "Комментарий не найден");
-  const post = await env.DB.prepare("SELECT author_id FROM posts WHERE id = ?").bind(c.post_id).first();
-  if (account.id !== c.author_id && !canModerate(account, post && post.author_id)) {
+  const post = await env.DB.prepare("SELECT author_id, space FROM posts WHERE id = ?").bind(c.post_id).first();
+  const space = await spaceForModeration(env, account, post ? post.space : "global");
+  if (account.id !== c.author_id && !canModerate(account, post && post.author_id, space)) {
     throw new HttpError(403, "forbidden", "Можно удалять только свои комментарии");
   }
   await dapi(env, "DELETE", `/channels/${c.post_id}/messages/${c.id}`, { allow404: true });
@@ -356,7 +388,7 @@ export async function react(env, account, id, body, now) {
   }
   await env.DB.batch(stmts);
   const row = await env.DB.prepare("SELECT re0, re1 FROM posts WHERE id = ?").bind(post.id).first();
-  if (adding && post.author_id && post.author_id !== account.id) {
+  if (adding && post.author_id && post.author_id !== account.id && await N.isReader(env, post.space, post.author_id)) {
     await N.react(env, { to: post.author_id, postId: post.id, actor: account, count: row.re0 + row.re1, text: post.text }, now);
   }
   return { reactions: [row.re0, row.re1], my: adding ? slot : -1 };
@@ -366,7 +398,8 @@ export async function react(env, account, id, body, now) {
 export async function solve(env, account, id, body, now) {
   const post = await loadPost(env, id);
   if (post.type !== "help") throw new HttpError(400, "not_help", "Решённым можно отметить только вопрос");
-  if (!canModerate(account, post.author_id)) throw new HttpError(403, "forbidden", "Только автор может отметить вопрос решённым");
+  const access = await spaceForModeration(env, account, post.space);
+  if (!canModerate(account, post.author_id, access)) throw new HttpError(403, "forbidden", "Только автор может отметить вопрос решённым");
   const solved = body.solved === undefined ? !post.solved : !!body.solved;
   const space = await getSpace(env, post.space);
   const tags = [space.tagIds.help, solved ? space.tagIds.solved : null].filter(Boolean);
@@ -384,6 +417,7 @@ export async function report(env, account, body, now) {
     comment = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND post_id = ? AND deleted = 0").bind(String(body.commentId), post.id).first();
     if (!comment) throw new HttpError(404, "no_comment", "Комментарий не найден");
   }
+  await spaceFor(env, account, post.space);
   const reason = cleanText(body.reason || "—", 300);
   await rateLimit(env, "report", account.id, now);
   const link = `https://discord.com/channels/${env.DISCORD_GUILD_ID}/${post.id}` + (comment ? `/${comment.id}` : "");

@@ -5,9 +5,15 @@ const THREAD_TYPES = new Set([10, 11, 12]);
 
 export function makeFilter({ guildId, categories, channels }) {
   const cats = new Set(categories);
+  // configured categories, plus the extra "MineFeed communities N" ones the Worker creates when one fills up
+  const isFeedCategory = (id) => {
+    if (cats.has(id)) return true;
+    const c = id && channels(id);
+    return !!(c && /^MineFeed communities/i.test(c.name || ""));
+  };
   const isFeedForum = (id) => {
     const f = id && channels(id);
-    return !!(f && f.type === FORUM && cats.has(f.parentId));
+    return !!(f && f.type === FORUM && isFeedCategory(f.parentId));
   };
   // Unknown channels (old archived threads not in the cache) are forwarded too: the Worker
   // ignores anything that is not a known post, and that costs nothing.
