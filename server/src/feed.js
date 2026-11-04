@@ -116,6 +116,7 @@ export function postOut(r, my) {
     reactions: [r.re0, r.re1],
     my: my ?? -1,
     solved: !!r.solved,
+    pinned: !!r.pinned,
     image: r.image ? JSON.parse(r.image) : null,
   };
 }
@@ -292,6 +293,33 @@ export async function createPost(env, account, body, now) {
   ).bind(id, space.id, account.id, body.type, text, now, now).run();
   await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
   return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
+}
+
+/**
+ * Pinned first post of a new community, written as its owner, plus an optional first comment.
+ * System text, so the usual length limits don't apply (Discord max is 2000).
+ */
+export async function publishWelcome(env, spaceId, owner, { title, text, comment }, now) {
+  const space = await getSpace(env, spaceId);
+  const msg = await postAs(env, space, owner, {
+    content: text,
+    thread_name: threadName(title),
+    ...(space.tagIds.talk ? { applied_tags: [space.tagIds.talk] } : {}),
+  });
+  const id = msg.channel_id;
+  await dapi(env, "PATCH", `/channels/${id}`, { body: { flags: 2 }, allow404: true }).catch(() => {}); // pin in Discord
+  const stmts = [
+    env.DB.prepare(
+      "INSERT INTO posts (id, space, author_id, type, text, created_at, updated_at, comments, pinned) VALUES (?, ?, ?, 'talk', ?, ?, ?, ?, 1)"
+    ).bind(id, space.id, owner.id, text, now, now, comment ? 1 : 0),
+  ];
+  if (comment) {
+    const c = await postAs(env, space, owner, { content: comment }, id);
+    stmts.push(env.DB.prepare("INSERT INTO comments (id, post_id, author_id, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(c.id, id, owner.id, comment, now, now));
+  }
+  await env.DB.batch(stmts);
+  return id;
 }
 
 /** POST /v2/posts/:id/comments {text} */

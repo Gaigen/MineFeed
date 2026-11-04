@@ -5,6 +5,7 @@ import { Client, GatewayIntentBits, Partials } from "discord.js";
 import { readFileSync, existsSync } from "node:fs";
 import { Relay } from "./relay.js";
 import { makeFilter } from "./filter.js";
+import { COMMAND, makeApplications, workerClient } from "./apply.js";
 
 loadEnvFile(new URL("./.env", import.meta.url).pathname);
 const need = ["DISCORD_BOT_TOKEN", "WORKER_URL", "BOT_SECRET", "GUILD_ID", "FEED_CATEGORY_IDS"];
@@ -24,6 +25,9 @@ const channels = (id) => {
   return { type: c.type, parentId: c.parentId, name: c.name, appliedTags: c.appliedTags };
 };
 const filter = makeFilter({ guildId: GUILD_ID, categories: process.env.FEED_CATEGORY_IDS.split(",").map((s) => s.trim()), channels });
+
+const onInteraction = makeApplications({ call: workerClient({ url: WORKER_URL, secret: BOT_SECRET }), modRoleId: MOD_ROLE_ID });
+client.on("interactionCreate", (i) => { onInteraction(i); });
 
 let forwarded = 0;
 client.on("raw", (packet) => {
@@ -46,6 +50,12 @@ client.on("raw", (packet) => {
 
 client.once("clientReady", async () => {
   console.log(`ready as ${client.user.tag}`);
+  try {
+    // guild command: shows up instantly, replaces the previous set
+    await client.application.commands.set([COMMAND], GUILD_ID);
+  } catch (e) {
+    console.warn("command registration failed:", e.message);
+  }
   if (MOD_ROLE_ID) {
     try {
       const guild = await client.guilds.fetch(GUILD_ID);

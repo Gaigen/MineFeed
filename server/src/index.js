@@ -7,6 +7,7 @@ import * as F from "./feed.js";
 import * as N from "./notify.js";
 import * as B from "./bot.js";
 import * as C from "./communities.js";
+import * as AP from "./applications.js";
 
 const API = 2;
 
@@ -59,6 +60,13 @@ export async function route(request, env, now) {
     await B.checkBot(request, env);
     return json(await B.events(env, await readJson(request, 256 * 1024), now));
   }
+  if (p.startsWith("/v2/bot/apply") && m === "POST") {
+    await B.checkBot(request, env);
+    if (p === "/v2/bot/apply/check") return json(await AP.botCheck(env, await readJson(request)));
+    if (p === "/v2/bot/apply") return json(await AP.botSubmit(env, await readJson(request, 8192), now), 201);
+    const am = /^\/v2\/bot\/apply\/([a-z0-9]{6,16})\/decide$/.exec(p);
+    if (am) return json(await AP.decide(env, am[1], await readJson(request), now));
+  }
 
   // everything below needs an account
   if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
@@ -72,6 +80,10 @@ export async function route(request, env, now) {
     if (p === "/v2/notifications" && m === "GET") return json(await N.list(env, account, q));
     if (p === "/v2/notifications/seen" && m === "POST") return json(await N.seen(env, account, await readJson(request), now));
     if (p === "/v2/join" && m === "POST") return json(await C.join(request, env, account, await readJson(request), now));
+    if (p === "/v2/communities/applications" && m === "POST") {
+      const body = await readJson(request, 8192);
+      return json(await AP.submit(env, account, body, body.lang || request.headers.get("accept-language"), now), 201);
+    }
     if (p === "/v2/communities" && m === "GET") return json(await C.mine(env, account));
     if (p === "/v2/communities" && m === "POST") return json(await C.create(env, account, await readJson(request), now), 201);
     const cc = /^\/v2\/communities\/([a-z0-9]{6,16})(?:\/(codes|requests|members|leave)(?:\/([^/]{1,64}))?)?$/.exec(p);

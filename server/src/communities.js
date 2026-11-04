@@ -32,7 +32,7 @@ export function validName(raw) {
   return name;
 }
 
-function validDescription(raw) {
+export function validDescription(raw) {
   const d = clean(raw);
   if ([...d].length > 200) throw new HttpError(400, "bad_description", "Описание: максимум 200 символов");
   return d;
@@ -129,20 +129,23 @@ async function pickCategory(env, now) {
 
 // ---------- communities ----------
 
-/** POST /v2/communities {name, description} — needs a linked Discord that is on the server. */
+export async function ownsCommunity(env, accountId) {
+  const owned = await env.DB.prepare("SELECT COUNT(*) AS n FROM communities WHERE owner_id = ? AND deleted = 0").bind(accountId).first();
+  return owned.n >= MAX_OWNED;
+}
+
+/** POST /v2/communities {name, description} — server moderators only; players send an application. */
 export async function create(env, account, body, now) {
-  if (!account.discord_id) {
-    throw new HttpError(403, "discord_required", "Чтобы создать сообщество, привяжи Discord в профиле");
-  }
-  const name = validName(body.name);
-  const description = validDescription(body.description);
-  const owned = await env.DB.prepare("SELECT COUNT(*) AS n FROM communities WHERE owner_id = ? AND deleted = 0").bind(account.id).first();
-  if (owned.n >= MAX_OWNED) throw new HttpError(409, "limit", "Можно создать только одно сообщество");
+  if (!account.moderator) throw new HttpError(403, "apply_instead", "Сообщества создаются по заявке");
   await rateLimit(env, "community", account.id, now);
-  const member = await dapi(env, "GET", `/guilds/${env.DISCORD_GUILD_ID}/members/${account.discord_id}`, { allow404: true });
-  if (!member) {
-    throw new HttpError(403, "not_in_guild", "Сначала зайди на наш Discord-сервер", { discordUrl: env.DISCORD_INVITE || null });
-  }
+  return createCommunity(env, account, { name: body.name, description: body.description }, now);
+}
+
+/** Forum + roles + rows. The owner gets the Discord roles if their Discord is linked. */
+export async function createCommunity(env, account, fields, now) {
+  const name = validName(fields.name);
+  const description = validDescription(fields.description);
+  if (await ownsCommunity(env, account.id)) throw new HttpError(409, "limit", "Можно создать только одно сообщество");
 
   const g = env.DISCORD_GUILD_ID;
   const made = { roles: [], channel: null };
@@ -179,7 +182,7 @@ export async function create(env, account, body, now) {
       env.DB.prepare("INSERT INTO spaces (id, forum_id, tags) VALUES (?, ?, ?)").bind(id, forum.id, JSON.stringify(tags)),
     ]);
     const c = await env.DB.prepare("SELECT * FROM communities WHERE id = ?").bind(id).first();
-    await applyRoles(env, c, account.discord_id, "owner");
+    if (account.discord_id) await applyRoles(env, c, account.discord_id, "owner");
     return { community: out(c, "owner") };
   } catch (e) {
     // undo half-made Discord objects
@@ -209,10 +212,12 @@ export async function mine(env, account) {
     ).bind(...modOf).all();
     for (const r of rq) requests[r.community_id] = r.n;
   }
+  const app = await env.DB.prepare("SELECT id, name, status, reason, community_id, created_at FROM community_applications WHERE account_id = ? ORDER BY created_at DESC LIMIT 1").bind(account.id).first();
   return {
+    application: app ? { id: app.id, name: app.name, status: app.status, reason: app.reason, communityId: app.community_id, createdAt: app.created_at } : null,
     communities: results.map((c) => out(c, c.my_role, { unread: c.unread, ...(isMod(c.my_role) ? { requests: requests[c.id] || 0 } : {}) })),
     pending,
-    canCreate: !!account.discord_id && !results.some((c) => c.my_role === "owner"),
+    canApply: !!account.discord_id && !results.some((c) => c.my_role === "owner") && !(app && app.status === "pending"),
   };
 }
 

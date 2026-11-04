@@ -35,3 +35,12 @@ Memory: ~60–90 MB. Traffic: tiny.
 
 See `.env.example`. `BOT_SECRET` must equal the Worker secret of the same name.
 `FEED_CATEGORY_IDS` lists the Discord categories that hold MineFeed forums (main feed + communities).
+
+## Community applications
+
+On start the bot registers the guild command `/community` (`/сообщество` in Russian Discord).
+It checks with the Worker that the player's Discord is linked to MineFeed, opens a form
+(name, short description, about, links) and sends it to `POST /v2/bot/apply`.
+The Worker posts the application to `APPLICATIONS_CHANNEL_ID` with Approve/Reject buttons.
+Only members with `MOD_ROLE_ID` or Administrator can press them; Reject asks for an optional reason.
+On approval the Worker creates the community, a pinned welcome post and DMs the player.

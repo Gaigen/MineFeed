@@ -19,6 +19,7 @@ function setup({ categoryFull = false } = {}) {
     DB: makeD1(MIG),
     DISCORD_GUILD_ID: "g", COMMUNITY_CATEGORY_ID: "cat1", MOD_ROLE_ID: "srvmod", DISCORD_INVITE: "https://discord.gg/x",
     FEED_FORUM_ID: "900", FEED_TAGS: "{}", COMMUNITY_MAX_MEMBERS: "3",
+    BOT_SECRET: "bot-secret-0123456789", APPLICATIONS_CHANNEL_ID: "apps",
     DISCORD_FETCH: async (url, init = {}) => {
       const u = new URL(url);
       const p = u.pathname.replace("/api/v10", "");
@@ -38,6 +39,8 @@ function setup({ categoryFull = false } = {}) {
         init.method === "PUT" ? set.add(mm[2]) : set.delete(mm[2]);
         return new Response(null, { status: 204 });
       }
+      if (p === "/users/@me/channels" && init.method === "POST") return Response.json({ id: "dm-" + body.recipient_id });
+      if (/^\/channels\/[^/]+\/messages$/.test(p) && init.method === "POST") return Response.json({ id: String(seq++) });
       if (/^\/channels\/\d+\/webhooks$/.test(p)) return Response.json({ id: "wh" + p.split("/")[2], token: "tok" });
       if (/^\/webhooks\//.test(p)) { const id = String(seq++); return Response.json({ id, channel_id: u.searchParams.get("thread_id") || id }); }
       if (init.method === "DELETE" || init.method === "PATCH") return new Response(null, { status: 204 });
@@ -47,6 +50,7 @@ function setup({ categoryFull = false } = {}) {
   const api = async (method, path, opts = {}) => {
     const headers = { "cf-connecting-ip": opts.ip || "1.1.1.1" };
     if (opts.key) headers.authorization = `Bearer ${opts.key}`;
+    if (opts.bot) headers.authorization = `Bearer ${env.BOT_SECRET}`;
     const req = new Request("https://x.test" + path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
     let res;
     try { res = await route(req, env, opts.now ?? T0); } catch (e) { if (!(e instanceof HttpError)) throw e; res = errorResponse(e); }
@@ -57,7 +61,15 @@ function setup({ categoryFull = false } = {}) {
     if (discordId) await env.DB.prepare("UPDATE accounts SET discord_id = ? WHERE id = ?").bind(discordId, r.data.account.id).run();
     return { key: r.data.key, id: r.data.account.id };
   };
-  return { env, api, user, calls, roles, guildMembers, channels };
+  // the normal way: application from the mod, Approve pressed in Discord
+  const community = async (owner, name, extra = {}) => {
+    const app = await api("POST", "/v2/communities/applications", { key: owner.key, body: { name, ...extra } });
+    assert.equal(app.status, 201, JSON.stringify(app.data));
+    const d = await api("POST", `/v2/bot/apply/${app.data.application.id}/decide`, { bot: true, body: { approve: true, staffId: "d-staff" } });
+    assert.equal(d.data.status, "approved", JSON.stringify(d.data));
+    return d.data.community.id;
+  };
+  return { env, api, user, community, calls, roles, guildMembers, channels };
 }
 
 test("channel names", () => {
@@ -65,19 +77,39 @@ test("channel names", () => {
   assert.equal(channelName("!!!"), "community");
 });
 
-test("create needs Discord on the server, one per owner", async () => {
-  const { api, user, calls, roles, channels } = setup();
+test("players apply, staff approve in Discord", async () => {
+  const { api, user, env, calls, roles, channels } = setup();
+  const apply = (u, body) => api("POST", "/v2/communities/applications", { key: u.key, body });
   const nod = await user("nodiscord");
-  assert.equal((await api("POST", "/v2/communities", { key: nod.key, body: { name: "Test" } })).data.code, "discord_required");
+  assert.equal((await apply(nod, { name: "Test" })).data.code, "discord_required");
   const out = await user("outsider", "d-out");
-  const r0 = await api("POST", "/v2/communities", { key: out.key, body: { name: "Test" } });
+  const r0 = await apply(out, { name: "Test" });
   assert.equal(r0.data.code, "not_in_guild");
   assert.equal(r0.data.discordUrl, "https://discord.gg/x");
 
   const a = await user("alice", "d-alice");
-  const r = await api("POST", "/v2/communities", { key: a.key, body: { name: "Проект Шахта", description: "копаем" } });
+  assert.equal((await api("POST", "/v2/communities", { key: a.key, body: { name: "Direct" } })).data.code, "apply_instead");
+  const r = await apply(a, { name: "Проект Шахта", description: "копаем", about: "Большая шахта до бедрока", links: "https://example.com", lang: "ru-RU" });
   assert.equal(r.status, 201);
-  assert.equal(r.data.community.role, "owner");
+  const appId = r.data.application.id;
+  assert.equal(r.data.application.status, "pending");
+  const staff = calls.find((c) => c.m === "POST" && c.p === "/channels/apps/messages");
+  assert.equal(staff.body.components[0].components[0].custom_id, `mfapp:approve:${appId}`);
+  assert.equal(staff.body.components[0].components[1].custom_id, `mfapp:reject:${appId}`);
+  assert.equal((await apply(a, { name: "Again" })).data.code, "already_applied");
+  let mine = (await api("GET", "/v2/communities", { key: a.key })).data;
+  assert.equal(mine.application.status, "pending");
+  assert.equal(mine.canApply, false);
+
+  // bot side
+  assert.equal((await api("POST", "/v2/bot/apply/check", { body: { discordId: "d-alice" } })).status, 401);
+  assert.deepEqual((await api("POST", "/v2/bot/apply/check", { bot: true, body: { discordId: "d-alice" } })).data, { ok: false, code: "already_applied" });
+  assert.deepEqual((await api("POST", "/v2/bot/apply/check", { bot: true, body: { discordId: "d-nobody" } })).data, { ok: false, code: "not_linked" });
+  assert.deepEqual((await api("POST", "/v2/bot/apply/check", { bot: true, body: { discordId: "d-bob" } })).data, { ok: false, code: "not_linked" });
+
+  const d = await api("POST", `/v2/bot/apply/${appId}/decide`, { bot: true, body: { approve: true, staffId: "d-staff" } });
+  assert.equal(d.data.status, "approved");
+  assert.equal(d.data.community.role, "owner");
   const forum = calls.find((c) => c.m === "POST" && c.body && c.body.type === 15);
   assert.equal(forum.body.parent_id, "cat1");
   assert.equal(forum.body.name, "проект-шахта");
@@ -85,17 +117,52 @@ test("create needs Discord on the server, one per owner", async () => {
   assert.equal(ow.g.deny, String(1n << 10n));
   assert.ok(ow.srvmod);
   assert.equal(roles["d-alice"].size, 2); // mod + member role
-  assert.equal((await api("POST", "/v2/communities", { key: a.key, body: { name: "Second" } })).data.code, "limit");
-  const mine = await api("GET", "/v2/communities", { key: a.key });
-  assert.equal(mine.data.communities.length, 1);
-  assert.equal(mine.data.canCreate, false);
+  assert.equal((await api("POST", `/v2/bot/apply/${appId}/decide`, { bot: true, body: { approve: false } })).data.code, "already_decided");
+
+  // pinned welcome post with the creator + the "about" comment
+  const post = await env.DB.prepare("SELECT * FROM posts WHERE space = ?").bind(d.data.community.id).first();
+  assert.equal(post.pinned, 1);
+  assert.equal(post.author_id, a.id);
+  assert.match(post.text, /Создатель: alice \(@alice\)/);
+  const com = await env.DB.prepare("SELECT text FROM comments WHERE post_id = ?").bind(post.id).first();
+  assert.match(com.text, /О проекте/);
+  assert.match(com.text, /example\.com/);
+  const feed = (await api("GET", `/v2/feed?space=${d.data.community.id}`, { key: a.key })).data;
+  assert.equal(feed.posts[0].pinned, true);
+  // notification, DM, staff message without buttons
+  const n = await env.DB.prepare("SELECT kind FROM notifications WHERE account_id = ?").bind(a.id).first();
+  assert.equal(n.kind, "app_approved");
+  assert.ok(calls.find((c) => c.p === "/channels/dm-d-alice/messages" && /одобрено/.test(c.body.content)));
+  const edit = calls.find((c) => c.m === "PATCH" && c.p.startsWith("/channels/apps/messages/"));
+  assert.deepEqual(edit.body.components, []);
+
+  mine = (await api("GET", "/v2/communities", { key: a.key })).data;
+  assert.equal(mine.communities.length, 1);
+  assert.equal(mine.canApply, false);
+  assert.equal((await apply(a, { name: "Second" })).data.code, "limit");
+  assert.equal(channels.filter((c) => c.type === 15).length, 1);
+
+  // rejection with a reason, then a new application from Discord
+  const b = await user("bob", "d-bob");
+  const rb = await apply(b, { name: "Bobland", lang: "en" });
+  const rej = await api("POST", `/v2/bot/apply/${rb.data.application.id}/decide`, { bot: true, body: { approve: false, staffId: "d-staff", reason: "  too   vague " } });
+  assert.equal(rej.data.status, "rejected");
+  mine = (await api("GET", "/v2/communities", { key: b.key })).data;
+  assert.equal(mine.application.status, "rejected");
+  assert.equal(mine.application.reason, "too vague");
+  assert.equal(mine.canApply, true);
+  assert.ok(calls.find((c) => c.p === "/channels/dm-d-bob/messages" && /declined/.test(c.body.content)));
+  assert.deepEqual((await api("POST", "/v2/bot/apply/check", { bot: true, body: { discordId: "d-bob" } })).data, { ok: true, tag: "bob" });
+  const viaBot = await api("POST", "/v2/bot/apply", { bot: true, body: { discordId: "d-bob", name: "Bobland 2", about: "x".repeat(1000), locale: "en-US" } });
+  assert.equal(viaBot.status, 201);
   assert.equal(channels.filter((c) => c.type === 15).length, 1);
 });
 
-test("full category -> a new one is created", async () => {
-  const { api, user, calls } = setup({ categoryFull: true });
-  const a = await user("alice", "d-alice");
-  assert.equal((await api("POST", "/v2/communities", { key: a.key, body: { name: "Big" } })).status, 201);
+test("server moderators create directly; full category -> a new one", async () => {
+  const { api, user, env, calls } = setup({ categoryFull: true });
+  const m = await user("modder", "d-alice");
+  await env.DB.prepare("UPDATE accounts SET moderator = 1 WHERE id = ?").bind(m.id).run();
+  assert.equal((await api("POST", "/v2/communities", { key: m.key, body: { name: "Big" } })).status, 201);
   const cat = calls.find((c) => c.m === "POST" && c.body && c.body.type === 4);
   assert.equal(cat.body.name, "MineFeed communities 2");
   const forum = calls.find((c) => c.m === "POST" && c.body && c.body.type === 15);
@@ -103,13 +170,13 @@ test("full category -> a new one is created", async () => {
 });
 
 test("codes, joining, approval, members and privacy", async () => {
-  const { api, user, env, roles } = setup();
+  const { api, user, community, env, roles } = setup();
   const a = await user("alice", "d-alice");
   const b = await user("bob", "d-bob");
   const c = await user("carol");
   const d = await user("dave");
   const e = await user("eve");
-  const cid = (await api("POST", "/v2/communities", { key: a.key, body: { name: "Kuznya" } })).data.community.id;
+  const cid = await community(a, "Kuznya");
 
   // non-members can't see it, can't post into it
   assert.equal((await api("GET", `/v2/communities/${cid}`, { key: b.key })).status, 404);
@@ -154,7 +221,7 @@ test("codes, joining, approval, members and privacy", async () => {
   assert.equal(post.space, cid);
   const sa = await api("GET", `/v2/sync?since=${T0}&space=${cid}`, { key: a.key, now: T0 + 2000 });
   assert.deepEqual(sa.data.communities, [{ id: cid, unread: 1 }]);
-  assert.equal(sa.data.posts.length, 1);
+  assert.ok(sa.data.posts.some((p) => p.id === post.id && !p.pinned));
   await api("GET", `/v2/feed?space=${cid}`, { key: a.key, now: T0 + 3000 });
   assert.equal((await api("GET", `/v2/communities`, { key: a.key })).data.communities[0].unread, 0);
   assert.equal((await api("GET", "/v2/notifications", { key: e.key })).data.items.length, 0);
@@ -183,15 +250,14 @@ test("codes, joining, approval, members and privacy", async () => {
   assert.equal((await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { name: "Kuznya 2" } })).data.community.name, "Kuznya 2");
   assert.equal((await api("DELETE", `/v2/communities/${cid}`, { key: a.key })).status, 200);
   assert.equal((await api("GET", `/v2/communities/${cid}`, { key: a.key })).status, 404);
-  assert.equal((await api("GET", "/v2/communities", { key: a.key })).data.canCreate, true);
+  assert.equal((await api("GET", "/v2/communities", { key: a.key })).data.canApply, true);
 });
 
 test("Discord link later gives roles; bot MEMBER_JOIN too", async () => {
-  const { api, user, env, roles } = setup();
-  env.BOT_SECRET = "bot-secret-0123456789";
+  const { api, user, community, env, roles } = setup();
   const a = await user("alice", "d-alice");
   const z = await user("zed");
-  const cid = (await api("POST", "/v2/communities", { key: a.key, body: { name: "Kuznya" } })).data.community.id;
+  const cid = await community(a, "Kuznya");
   const code = (await api("POST", `/v2/communities/${cid}/codes`, { key: a.key, body: {} })).data.code.code;
   await api("POST", "/v2/join", { key: z.key, body: { code } });
   await env.DB.prepare("UPDATE accounts SET discord_id = 'd-zed' WHERE id = ?").bind(z.id).run();

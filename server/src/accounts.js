@@ -16,6 +16,7 @@ export const LIMITS = {
   comment: { max: 60, windowMs: 3_600_000 },  // per account per hour
   report: { max: 10, windowMs: 3_600_000 },   // per account per hour
   community: { max: 3, windowMs: 86_400_000 }, // community creations per account per day
+  apply: { max: 3, windowMs: 86_400_000 },    // community applications per account per day
   join: { max: 10, windowMs: 3_600_000 },     // code attempts per account per hour
   joinIp: { max: 30, windowMs: 3_600_000 },   // code attempts per IP per hour
 };
