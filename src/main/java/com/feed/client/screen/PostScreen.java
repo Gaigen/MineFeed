@@ -344,7 +344,7 @@ public class PostScreen extends ShellScreen {
             out.add(new Action(tr("feed.comment.delete"), RetroUi.ERROR, () -> confirmDeleteComment(c)));
         }
         if (!mine && mod && CommunityApi.serverMod() && c.authorId != null) {
-            out.add(new Action(tr("feed.mod.ban"), RetroUi.ERROR, () -> banAuthor(c.authorId, commentAuthor(c), c)));
+            out.add(new Action(tr("feed.comment.ban"), RetroUi.ERROR, () -> banAuthor(c.authorId, commentAuthor(c), c)));
         }
         if (!mine && !mod) {
             out.add(new Action(tr("feed.comment.report"), RetroUi.GRAY, () -> openModal(new ReportScreen(home(), post.id, c.id))));

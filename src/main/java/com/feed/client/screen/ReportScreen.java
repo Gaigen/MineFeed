@@ -34,13 +34,20 @@ public class ReportScreen extends ModalScreen {
     }
 
     @Override
+    public Component getTitle() {
+        return sent != null ? Component.translatable("feed.report.sent_title") : super.getTitle();
+    }
+
+    @Override
     protected void init() {
         if (sent != null) {
             layout(280, 72);
             return;
         }
         layout(360, 124);
-        int y = bodyTop() + 32;
+        int rows = chipRows();
+        layout(360, 104 + rows * 15);
+        int y = bodyTop() + 2 + rows * 15;
         detailsBox = addField(AccountUi.field(this.font, innerX() + LABEL_W, y, innerW() - LABEL_W, 200,
                 Component.translatable("feed.report.details_hint")));
         detailsBox.setValue(details);
@@ -75,7 +82,7 @@ public class ReportScreen extends ModalScreen {
                 setStatus(null, RetroUi.ERROR);
             }) + 4;
         }
-        y += 32;
+        y += 2 + chipRows() * 15;
         g.drawString(this.font, tr("feed.report.details"), x, y + 4, RetroUi.GRAY, false);
         y += 22;
         g.drawString(this.font, tr("feed.report.hint"), x, y, RetroUi.GRAY, false);
@@ -87,6 +94,22 @@ public class ReportScreen extends ModalScreen {
         if (busy || !status.getString().isEmpty()) {
             drawStatus(g, by - 12);
         }
+    }
+
+    /** Reason chips wrap onto a second row on narrow screens. */
+    private int chipRows() {
+        int fx = innerX() + LABEL_W;
+        int cx = fx;
+        int rows = 1;
+        for (String r : ModerationApi.REASONS) {
+            int cw = RetroUi.chipWidth(this.font, ModerationScreen.reasonLabel(r));
+            if (cx + cw > px + pw - PAD && cx > fx) {
+                cx = fx;
+                rows++;
+            }
+            cx += cw + 4;
+        }
+        return rows;
     }
 
     private void submit() {

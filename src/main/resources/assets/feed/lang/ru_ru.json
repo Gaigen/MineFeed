@@ -501,5 +501,7 @@
   "feed.profile.banned_until": "Бан до %s",
   "feed.account.error.banned_forever": "Аккаунт заблокирован модератором",
   "feed.account.error.banned_until": "Аккаунт заблокирован до %s",
-  "feed.account.error.banned_reason": "%s. Причина: %s"
+  "feed.account.error.banned_reason": "%s. Причина: %s",
+  "feed.comment.ban": "бан…",
+  "feed.report.sent_title": "Жалоба отправлена"
 }

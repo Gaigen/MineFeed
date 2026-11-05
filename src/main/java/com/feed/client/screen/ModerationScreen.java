@@ -264,7 +264,7 @@ public class ModerationScreen extends ShellScreen {
             return;
         }
         int bx = nx;
-        boolean clickable = mouseY >= top && mouseY < bottom;
+        boolean clickable = by >= top && by + BTN_H <= bottom;
         bx += drawBtn(g, tr("feed.mod.open"), bx, by, RetroUi.FG, mouseX, mouseY, clickable, () -> open(r)) + 4;
         bx += drawBtn(g, tr("feed.mod.delete"), bx, by, RetroUi.ERROR, mouseX, mouseY, clickable, () -> confirmDelete(r)) + 4;
         if (r.canBan()) {

@@ -501,5 +501,7 @@
   "feed.profile.banned_until": "Banned until %s",
   "feed.account.error.banned_forever": "Your account was blocked by a moderator",
   "feed.account.error.banned_until": "Your account is blocked until %s",
-  "feed.account.error.banned_reason": "%s. Reason: %s"
+  "feed.account.error.banned_reason": "%s. Reason: %s",
+  "feed.comment.ban": "ban…",
+  "feed.report.sent_title": "Report sent"
 }
