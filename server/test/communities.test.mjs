@@ -231,6 +231,12 @@ test("codes, joining, approval, members and privacy", async () => {
   assert.equal(custom.data.code.code, "KUZNEC");
   assert.equal((await api("POST", `/v2/communities/${cid}/codes`, { key: a.key, body: { code: "kuznec" } })).data.code, "code_taken");
   assert.equal((await api("POST", `/v2/communities/${cid}/codes`, { key: a.key, body: { code: "a b" } })).status, 400);
+  // 0 = no limit / forever (the mod's Gson drops JSON nulls)
+  const edited = await api("PATCH", `/v2/communities/${cid}/codes/KUZNEC`, { key: a.key, body: { maxUses: 0, expiresInDays: 0, note: "lichno" } });
+  assert.equal(edited.data.code.maxUses, null);
+  assert.equal(edited.data.code.expiresAt, null);
+  assert.equal(edited.data.code.note, "lichno");
+  await api("PATCH", `/v2/communities/${cid}/codes/KUZNEC`, { key: a.key, body: { expiresInDays: 7, note: "" } });
 
   // instant join by code; Discord role for linked players
   let j = await api("POST", "/v2/join", { key: b.key, body: { code: rnd.code.toLowerCase() } });
@@ -276,6 +282,7 @@ test("codes, joining, approval, members and privacy", async () => {
   const members = await api("GET", `/v2/communities/${cid}/members`, { key: b.key });
   assert.deepEqual(members.data.members.map((m) => m.role), ["owner", "mod", "member"]);
   assert.equal(members.data.members[0].via, undefined); // only mods see how people joined
+  assert.ok("avatar" in members.data.members[0].account);
 
   // kick + ban; leave
   assert.equal((await api("DELETE", `/v2/communities/${cid}/members/${b.id}?ban=1`, { key: c.key })).status, 200);

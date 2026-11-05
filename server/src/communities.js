@@ -6,6 +6,7 @@ import { dapi } from "./dapi.js";
 import * as N from "./notify.js";
 import * as F from "./feed.js";
 import { welcomeContent } from "./welcome.js";
+import { keyOf } from "./avatars.js";
 
 export const MAX_OWNED = 1;
 export const MAX_CODES = 20;
@@ -64,10 +65,12 @@ function maxMembers(env) {
 
 const isMod = (role) => role === "owner" || role === "mod";
 
-function out(c, role, extra = {}) {
+function out(env, c, role, extra = {}) {
+  const guild = env.DISCORD_GUILD_ID;
   return {
     id: c.id, name: c.name, description: c.description, about: c.about || "", links: c.links || "", members: c.members,
-    ownerId: c.owner_id, createdAt: c.created_at, role, ...extra,
+    ownerId: c.owner_id, createdAt: c.created_at, role,
+    discordUrl: guild && c.forum_id ? `https://discord.com/channels/${guild}/${c.forum_id}` : null, ...extra,
   };
 }
 
@@ -186,7 +189,7 @@ export async function createCommunity(env, account, fields, now) {
     ]);
     const c = await env.DB.prepare("SELECT * FROM communities WHERE id = ?").bind(id).first();
     if (account.discord_id) await applyRoles(env, c, account.discord_id, "owner");
-    return { community: out(c, "owner") };
+    return { community: out(env, c, "owner") };
   } catch (e) {
     // undo half-made Discord objects
     if (made.channel) await dapi(env, "DELETE", `/channels/${made.channel}`, { allow404: true }).catch(() => {});
@@ -218,7 +221,7 @@ export async function mine(env, account) {
   const app = await env.DB.prepare("SELECT id, name, status, reason, community_id, created_at FROM community_applications WHERE account_id = ? ORDER BY created_at DESC LIMIT 1").bind(account.id).first();
   return {
     application: app ? { id: app.id, name: app.name, status: app.status, reason: app.reason, communityId: app.community_id, createdAt: app.created_at } : null,
-    communities: results.map((c) => out(c, c.my_role, { unread: c.unread, ...(isMod(c.my_role) ? { requests: requests[c.id] || 0 } : {}) })),
+    communities: results.map((c) => out(env, c, c.my_role, { unread: c.unread, ...(isMod(c.my_role) ? { requests: requests[c.id] || 0 } : {}) })),
     pending,
     canApply: !!account.discord_id && !results.some((c) => c.my_role === "owner") && !(app && app.status === "pending"),
   };
@@ -227,7 +230,7 @@ export async function mine(env, account) {
 /** GET /v2/communities/:id */
 export async function get(env, account, id) {
   const c = await access(env, account, id);
-  return { community: out(c, c.my_role) };
+  return { community: out(env, c, c.my_role) };
 }
 
 /** PATCH /v2/communities/:id {name?, description?} — owner. */
@@ -257,7 +260,7 @@ export async function update(env, account, id, body) {
   }
   await env.DB.prepare("UPDATE communities SET name = ?, description = ?, about = ?, links = ?, welcome_comment_id = ? WHERE id = ?")
     .bind(name, description, about, links, commentId, c.id).run();
-  return { community: out(next, c.my_role) };
+  return { community: out(env, next, c.my_role) };
 }
 
 function optional(raw, max) {
@@ -299,12 +302,12 @@ function codeFields(body, now, base = {}) {
     if ([...f.note].length > 40) throw new HttpError(400, "bad_note", "Заметка: максимум 40 символов");
   }
   if (body.maxUses !== undefined) {
-    if (body.maxUses === null) f.max_uses = null;
+    if (body.maxUses === null || body.maxUses === 0) f.max_uses = null;
     else if (Number.isInteger(body.maxUses) && body.maxUses >= 1 && body.maxUses <= 1000) f.max_uses = body.maxUses;
     else throw new HttpError(400, "bad_max_uses", "Лимит: от 1 до 1000 или без лимита");
   }
   if (body.expiresInDays !== undefined) {
-    if (body.expiresInDays === null) f.expires_at = null;
+    if (body.expiresInDays === null || body.expiresInDays === 0) f.expires_at = null;
     else if (Number.isInteger(body.expiresInDays) && body.expiresInDays >= 1 && body.expiresInDays <= 365) f.expires_at = now + body.expiresInDays * DAY;
     else throw new HttpError(400, "bad_expiry", "Срок: от 1 до 365 дней или бессрочно");
   }
@@ -416,9 +419,9 @@ export async function join(request, env, account, body, now) {
 export async function listRequests(env, account, id) {
   const c = await access(env, account, id, "mod");
   const { results } = await env.DB.prepare(
-    `SELECT r.*, a.tag, a.nick FROM join_requests r JOIN accounts a ON a.id = r.account_id WHERE r.community_id = ? ORDER BY r.created_at`
+    `SELECT r.*, a.tag, a.nick, a.avatar, a.skin, a.discord_id, a.discord_avatar FROM join_requests r JOIN accounts a ON a.id = r.account_id WHERE r.community_id = ? ORDER BY r.created_at`
   ).bind(c.id).all();
-  return { requests: results.map((r) => ({ account: { id: r.account_id, tag: r.tag, nick: r.nick }, via: r.via, createdAt: r.created_at })) };
+  return { requests: results.map((r) => ({ account: { id: r.account_id, tag: r.tag, nick: r.nick, avatar: keyOf(r) }, via: r.via, createdAt: r.created_at })) };
 }
 
 /** POST /v2/communities/:id/requests/:accountId {approve} — mods. */
@@ -447,13 +450,13 @@ export async function decide(env, account, id, accountId, body, now) {
 export async function listMembers(env, account, id) {
   const c = await access(env, account, id);
   const { results } = await env.DB.prepare(
-    `SELECT m.*, a.tag, a.nick FROM members m JOIN accounts a ON a.id = m.account_id WHERE m.community_id = ?
+    `SELECT m.*, a.tag, a.nick, a.avatar, a.skin, a.discord_id, a.discord_avatar FROM members m JOIN accounts a ON a.id = m.account_id WHERE m.community_id = ?
      ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'mod' THEN 1 ELSE 2 END, m.joined_at`
   ).bind(c.id).all();
   const mod = isMod(c.my_role);
   return {
     members: results.map((m) => ({
-      account: { id: m.account_id, tag: m.tag, nick: m.nick }, role: m.role, joinedAt: m.joined_at, ...(mod ? { via: m.via } : {}),
+      account: { id: m.account_id, tag: m.tag, nick: m.nick, avatar: keyOf(m) }, role: m.role, joinedAt: m.joined_at, ...(mod ? { via: m.via } : {}),
     })),
   };
 }

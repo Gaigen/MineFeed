@@ -32,7 +32,7 @@ public final class PostOpener {
                 feed.switchSpace(CommunityApi.cachedById(n.communityId()) != null ? n.communityId() : "global");
                 if ("request".equals(n.kind())) {
                     CommunityApi.Community c = CommunityApi.cachedById(n.communityId());
-                    mc.setScreen(c != null ? new com.feed.client.screen.CommunityScreen(feed, c) : feed);
+                    mc.setScreen(c != null ? new com.feed.client.screen.CommunityScreen(feed, c).tab(com.feed.client.screen.CommunityScreen.Tab.REQUESTS) : feed);
                 } else {
                     mc.setScreen(feed);
                 }

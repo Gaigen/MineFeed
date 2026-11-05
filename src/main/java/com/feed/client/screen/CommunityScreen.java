@@ -2,10 +2,12 @@ package com.feed.client.screen;
 
 import com.feed.client.CommunityApi;
 import com.feed.client.FeedApiClient;
+import com.feed.client.FeedTime;
 import com.feed.client.FeedUtil;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
@@ -17,65 +19,118 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-/** Community management: invite codes, members, join requests, settings. Members see members + leave. */
+/**
+ * Community page: invite codes, members, join requests and settings for mods;
+ * members see the member list and "about" with a leave button.
+ */
 @OnlyIn(Dist.CLIENT)
-public class CommunityScreen extends ModalScreen {
+public class CommunityScreen extends ShellScreen {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM").withZone(ZoneId.systemDefault());
-    private static final int ROW_GAP = 4;
+    private static final int TABS_Y = 24;
+    private static final int LIST_Y = 42;
+    private static final int GAP = 5;
+    private static final int BTN_H = 13;
+    private static final int LABEL_W = 78;
+    private static final int ROW = 22;
+    private static final int ABOUT_H = 40;
 
-    private enum Tab { CODES, MEMBERS, REQUESTS, SETTINGS }
+    public enum Tab { CODES, MEMBERS, REQUESTS, SETTINGS }
+
+    /** Clickable area of this frame; top/bottom = visible band (for rows inside the scrolled list). */
+    private record Btn(int x, int y, int w, int h, int top, int bottom, Runnable action) {}
 
     private CommunityApi.Community community;
     private Tab tab;
     private List<CommunityApi.Code> codes;
     private List<CommunityApi.Member> members;
     private List<CommunityApi.JoinRequest> requests;
-    private boolean newApproval;
-    private boolean newOnce;
     private String copied;
     private long copiedAt;
     private int scroll;
-    private int contentH;
+    private int contentHeight;
+    private boolean busy;
+    private Component status;
+    private int statusColor = RetroUi.ERROR;
+    private final List<Btn> btns = new ArrayList<>();
+    private int clipTop = 0;
+    private int clipBottom = 100_000;
     private EditBox nameBox;
     private EditBox descBox;
     private MultiLineEditBox aboutBox;
     private EditBox linksBox;
     /** Unsaved settings survive a resize: name, description, about, links. */
     private String[] draft;
-    private static final int ROW = 10 + AccountUi.FIELD_H + 4;
-    private static final int ABOUT_H = 44;
+    /** Preview builds only: data is given, nothing is loaded. */
+    private boolean offline;
 
-    public CommunityScreen(FeedScreen parent, CommunityApi.Community community) {
-        super(Component.empty(), parent);
+    public CommunityScreen(FeedScreen home, CommunityApi.Community community) {
+        super(Component.literal(community.name()), home);
         this.community = community;
         this.tab = community.isMod() ? Tab.CODES : Tab.MEMBERS;
     }
 
+    /** Opens on the given tab (e.g. requests from a notification). */
+    public CommunityScreen tab(Tab t) {
+        if (tabs().contains(t)) {
+            this.tab = t;
+        }
+        return this;
+    }
+
+    /** Dev preview: show fixed data instead of loading it. */
+    public CommunityScreen preview(List<CommunityApi.Code> codes, List<CommunityApi.Member> members,
+                                   List<CommunityApi.JoinRequest> requests) {
+        this.codes = codes;
+        this.members = members;
+        this.requests = requests;
+        this.offline = true;
+        return this;
+    }
+
+    boolean offline() {
+        return offline;
+    }
+
+    public CommunityApi.Community community() {
+        return community;
+    }
+
     @Override
-    public Component getTitle() {
-        return community.isMod() ? Component.translatable("feed.manage.title", community.name()) : Component.literal(community.name());
+    protected String navId() {
+        return "c:" + community.id();
     }
 
     @Override
     protected void init() {
-        layout(400, 280);
+        Component back = Component.translatable("feed.profile.back");
+        addRenderableWidget(new RetroButton(contentLeft(), 5, this.font.width(back) + 12, BTN_H, back, b -> openFeed(community.id())));
+        if (tab == Tab.CODES && community.isMod()) {
+            Component add = Component.translatable("feed.manage.codes.new");
+            int w = this.font.width(add) + 12;
+            addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - w, TABS_Y - 1, w, BTN_H, add,
+                    b -> editCode(null)).color(RetroUi.ACCENT));
+        }
+        nameBox = null;
+        descBox = null;
+        aboutBox = null;
+        linksBox = null;
         if (tab == Tab.SETTINGS && community.isOwner()) {
             if (draft == null) {
                 draft = new String[] {community.name(), nz(community.description()), nz(community.about()), nz(community.links())};
             }
-            int x = innerX();
-            int w = innerW();
-            int y = listTop() + 10;
-            nameBox = addField(AccountUi.field(this.font, x, y, w, 32, Component.translatable("feed.manage.settings.name")));
+            int fx = contentLeft() + LABEL_W;
+            int fw = contentWidth() - LABEL_W;
+            int y = LIST_Y;
+            nameBox = addRenderableWidget(AccountUi.field(this.font, fx, y, fw, 32, Component.translatable("feed.manage.settings.name")));
             y += ROW;
-            descBox = addField(AccountUi.field(this.font, x, y, w, 200, Component.translatable("feed.manage.settings.description")));
+            descBox = addRenderableWidget(AccountUi.field(this.font, fx, y, fw, 200, Component.translatable("feed.manage.settings.description")));
             y += ROW;
-            aboutBox = new MultiLineEditBox(this.font, x, y, w, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
+            aboutBox = new MultiLineEditBox(this.font, fx, y, fw, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
             aboutBox.setCharacterLimit(1000);
             addRenderableWidget(aboutBox);
-            y += ABOUT_H + 4 + 10;
-            linksBox = addField(AccountUi.field(this.font, x, y, w, 300, Component.translatable("feed.apply.links_hint")));
+            y += ABOUT_H + 12;
+            linksBox = addRenderableWidget(AccountUi.field(this.font, fx, y, fw, 300, Component.translatable("feed.apply.links_hint")));
             nameBox.setValue(draft[0]);
             descBox.setValue(draft[1]);
             aboutBox.setValue(draft[2]);
@@ -111,11 +166,16 @@ public class CommunityScreen extends ModalScreen {
         }
         tab = t;
         scroll = 0;
-        setStatus(null, RetroUi.ERROR);
+        status = null;
         rebuildWidgets();
     }
 
+    // ---------- data ----------
+
     private void load() {
+        if (offline) {
+            return;
+        }
         String id = community.id();
         switch (tab) {
             case CODES -> track(CommunityApi.codes(id).thenAccept(l -> this.minecraft.execute(() -> codes = l)));
@@ -123,9 +183,11 @@ public class CommunityScreen extends ModalScreen {
             case REQUESTS -> track(CommunityApi.requests(id).thenAccept(l -> this.minecraft.execute(() -> requests = l)));
             default -> { }
         }
+        if (community.isMod() && tab != Tab.REQUESTS) {
+            CommunityApi.requests(id).thenAccept(l -> this.minecraft.execute(() -> requests = l));
+        }
     }
 
-    /** Shows errors of background calls in the status line. */
     private void track(CompletableFuture<?> f) {
         f.whenComplete((r, ex) -> {
             if (ex != null) {
@@ -134,10 +196,15 @@ public class CommunityScreen extends ModalScreen {
         });
     }
 
+    private void setStatus(Component text, int color) {
+        status = text;
+        statusColor = color;
+    }
+
     /** Runs an action, then reloads the tab and the sidebar. */
     private void act(CompletableFuture<?> f, Component ok) {
         busy = true;
-        setStatus(null, RetroUi.ERROR);
+        status = null;
         f.whenComplete((r, ex) -> this.minecraft.execute(() -> {
             busy = false;
             if (ex != null) {
@@ -148,62 +215,92 @@ public class CommunityScreen extends ModalScreen {
                 setStatus(ok, AccountUi.GREEN);
             }
             load();
-            parent.loadCommunities();
+            home().loadCommunities();
         }));
     }
 
-    private int listTop() {
-        return bodyTop() + 4 + RetroUi.CHIP_H + 8;
+    /** Called by the code dialog after a change. */
+    void codesChanged() {
+        load();
     }
 
-    private int listBottom() {
-        return py + ph - PAD - 12;
+    private void editCode(CommunityApi.Code code) {
+        CodeScreen s = new CodeScreen(home(), this, community.id(), code);
+        s.from(this);
+        this.minecraft.setScreen(s);
     }
 
-    // ---------- render ----------
+    private void confirm(String titleKey, Component message, boolean danger, Runnable yes) {
+        this.minecraft.setScreen(new RetroConfirmScreen(this, Component.translatable(titleKey), message,
+                Component.translatable(titleKey), danger, () -> {
+            this.minecraft.setScreen(this);
+            yes.run();
+        }));
+    }
+
+    // ---------- rendering ----------
 
     @Override
-    protected void renderContent(GuiGraphics g, int mouseX, int mouseY) {
-        int x = innerX();
-        int tx = x;
-        int ty = bodyTop() + 4;
+    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        super.renderBackground(g, mouseX, mouseY, partialTick);
+        for (EditBox f : new EditBox[] {nameBox, descBox, linksBox}) {
+            if (f != null) {
+                AccountUi.drawField(g, f);
+            }
+        }
+    }
+
+    @Override
+    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        btns.clear();
+        super.render(g, mouseX, mouseY, partialTick);
+        int x = contentLeft();
+        int w = contentWidth();
+        int backW = this.font.width(Component.translatable("feed.profile.back")) + 12;
+        int tx = x + backW + 8;
+        PixelIcon.draw(g, community.isOwner() ? "crown" : "lock", tx, TITLE_Y, RetroUi.ACCENT);
+        drawTitle(g, community.name(), tr(community.isMod() ? "feed.manage.sub" : "feed.manage.sub_member"),
+                tx + 10, TITLE_Y, x + w);
+
+        int cx = x;
         for (Tab t : tabs()) {
             String label = switch (t) {
                 case CODES -> tr("feed.manage.tab.codes");
                 case MEMBERS -> tr("feed.manage.tab.members") + " " + community.members();
                 case REQUESTS -> tr("feed.manage.tab.requests") + (requestsCount() > 0 ? " " + requestsCount() : "");
-                case SETTINGS -> tr("feed.manage.tab.settings");
+                case SETTINGS -> tr(community.isOwner() ? "feed.manage.tab.settings" : "feed.manage.tab.about");
             };
-            tx += chip(g, label, tx, ty, t == Tab.REQUESTS && requestsCount() > 0 ? RetroUi.ERROR : RetroUi.FG, t == tab,
-                    () -> switchTab(t)) + 6;
+            int color = t == Tab.REQUESTS && requestsCount() > 0 && t != tab ? RetroUi.ERROR : RetroUi.ACCENT;
+            cx += chip(g, label, cx, TABS_Y, color, t == tab, mouseX, mouseY, () -> switchTab(t)) + 3;
         }
-        drawStatus(g, listBottom() + 2);
 
         if (tab == Tab.SETTINGS) {
-            renderSettings(g, mouseX, mouseY);
-            return;
+            renderSettings(g, x, w, mouseX, mouseY);
+        } else {
+            int top = LIST_Y;
+            int bottom = this.height - (status != null ? 16 : 4);
+            boolean in = mouseY >= top && mouseY < bottom;
+            int mx = in ? mouseX : -1;
+            int my = in ? mouseY : -1;
+            g.enableScissor(sidebarW(), top, this.width, bottom);
+            clipTop = top;
+            clipBottom = bottom;
+            int y = top - scroll;
+            y = switch (tab) {
+                case CODES -> renderCodes(g, x, y, w, mx, my);
+                case MEMBERS -> renderMembers(g, x, y, w, mx, my);
+                case REQUESTS -> renderRequests(g, x, y, w, mx, my);
+                default -> y;
+            };
+            clipTop = 0;
+            clipBottom = 100_000;
+            g.disableScissor();
+            contentHeight = y + scroll - top;
+            drawScrollbar(g, top, bottom, scroll, contentHeight);
         }
-        int top = listTop();
-        int bottom = listBottom() - 2;
-        if (tab == Tab.CODES) {
-            top = renderCodesHeader(g, top, mouseX, mouseY);
-        }
-        g.enableScissor(px + 1, top, px + pw - 1, bottom);
-        int y = top - scroll;
-        int mY = mouseY >= top && mouseY < bottom ? mouseY : -1000;
-        switch (tab) {
-            case CODES -> y = renderCodes(g, y, mouseX, mY);
-            case MEMBERS -> y = renderMembers(g, y, mouseX, mY);
-            case REQUESTS -> y = renderRequests(g, y, mouseX, mY);
-            default -> { }
-        }
-        g.disableScissor();
-        contentH = y + scroll - top;
-        int viewport = bottom - top;
-        if (contentH > viewport) {
-            int barH = Math.max(10, viewport * viewport / contentH);
-            int barY = top + (viewport - barH) * scroll / Math.max(1, contentH - viewport);
-            g.fill(px + pw - 4, barY, px + pw - 2, barY + barH, RetroUi.GRAY);
+        if (status != null) {
+            String s = FeedUtil.clip(this.font, status.getString(), w);
+            g.drawString(this.font, s, x, this.height - 12, statusColor, false);
         }
     }
 
@@ -215,200 +312,241 @@ public class CommunityScreen extends ModalScreen {
         return c == null ? 0 : c.requests();
     }
 
-    private int renderCodesHeader(GuiGraphics g, int y, int mouseX, int mouseY) {
-        int x = innerX();
-        String join = tr("feed.manage.codes.join");
-        g.drawString(this.font, join, x, y + 2, RetroUi.GRAY, false);
-        int cx = x + this.font.width(join) + 6;
-        cx += chip(g, tr("feed.manage.codes.instant"), cx, y, RetroUi.FG, !newApproval, () -> newApproval = false) + 4;
-        cx += chip(g, tr("feed.manage.codes.approval"), cx, y, RetroUi.ACCENT, newApproval, () -> newApproval = true) + 10;
-        chip(g, tr(newOnce ? "feed.manage.codes.once" : "feed.manage.codes.many"), cx, y, RetroUi.FG, newOnce, () -> newOnce = !newOnce);
-        String add = tr("feed.manage.codes.new");
-        int bw = buttonWidth(add);
-        button(g, add, px + pw - PAD - bw, y - 2, bw, BTN_H, RetroUi.ACCENT, false, mouseX, mouseY,
-                () -> act(CommunityApi.createCode(community.id(), newApproval, newOnce ? 1 : null, null), null));
-        return y + BTN_H + 6;
-    }
-
-    private int renderCodes(GuiGraphics g, int y, int mouseX, int mouseY) {
-        int x = innerX();
-        int w = innerW();
+    private int renderCodes(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
         if (codes == null) {
-            return loadingLine(g, y);
+            return loadingLine(g, x, y);
         }
         if (codes.isEmpty()) {
-            return emptyLine(g, y, "feed.manage.codes.empty");
+            return emptyLine(g, x, y, w, "feed.manage.codes.empty");
         }
         for (CommunityApi.Code c : codes) {
-            int h = 26;
-            g.fill(x, y, x + w, y + h, RetroUi.HOVER_BG);
-            g.drawString(this.font, c.code(), x + 5, y + 4, c.dead() ? RetroUi.GRAY : RetroUi.ACCENT, false);
-            String uses = c.uses() + "/" + (c.maxUses() == null ? "\u221e" : c.maxUses());
-            String until = c.dead() ? tr("feed.manage.codes.dead")
-                    : c.expiresAt() == null ? tr("feed.manage.codes.forever")
-                    : tr("feed.manage.codes.until", DAY.format(Instant.ofEpochMilli(c.expiresAt())));
-            String meta = tr(c.approval() ? "feed.manage.codes.approval" : "feed.manage.codes.instant") + " \u00b7 " + uses + " \u00b7 " + until;
-            String revoke = tr("feed.manage.codes.revoke");
-            String copy = copied != null && copied.equals(c.code()) && System.currentTimeMillis() - copiedAt < 2000
-                    ? tr("feed.manage.codes.copied") : tr("feed.manage.codes.copy");
-            int rw = buttonWidth(revoke);
-            int cw = buttonWidth(copy);
-            int bx = x + w - 5 - rw;
-            g.drawString(this.font, FeedUtil.clip(this.font, meta, bx - cw - 10 - x), x + 5, y + 15, RetroUi.GRAY, false);
-            String code = c.code();
-            button(g, revoke, bx, y + 5, rw, BTN_H, RetroUi.FG, false, mouseX, mouseY, () -> this.minecraft.setScreen(
-                    new RetroConfirmScreen(this, Component.translatable("feed.manage.codes.revoke"),
-                            Component.translatable("feed.manage.codes.revoke_confirm", code), Component.translatable("feed.manage.codes.revoke"),
-                            false, () -> {
-                        this.minecraft.setScreen(this);
-                        act(CommunityApi.revokeCode(community.id(), code), null);
-                    })));
-            if (!c.dead()) {
-                button(g, copy, bx - 5 - cw, y + 5, cw, BTN_H, RetroUi.FG, false, mouseX, mouseY, () -> {
-                    this.minecraft.keyboardHandler.setClipboard(code);
-                    copied = code;
+            int h = 28;
+            boolean dead = c.dead();
+            RetroUi.drawBox(g, x, y, w, h, false);
+            if (dead) {
+                g.renderOutline(x, y, w, h, RetroUi.SHADOW);
+            }
+            int bx = x + w - 6;
+            int by = y + 8;
+            String edit = tr("feed.manage.codes.edit");
+            bx -= RetroUi.buttonWidth(this.font, edit);
+            button(g, edit, bx, by, RetroUi.FG, mouseX, mouseY, () -> editCode(c));
+            if (dead) {
+                String d = tr("feed.manage.codes.dead");
+                bx -= this.font.width(d) + 8;
+                g.drawString(this.font, d, bx, y + 10, RetroUi.GRAY, false);
+            } else {
+                boolean justCopied = c.code().equals(copied) && System.currentTimeMillis() - copiedAt < 2000;
+                String copy = tr(justCopied ? "feed.manage.codes.copied" : "feed.manage.codes.copy");
+                bx -= RetroUi.buttonWidth(this.font, copy) + 4;
+                button(g, copy, bx, by, justCopied ? AccountUi.GREEN : RetroUi.FG, mouseX, mouseY, () -> {
+                    this.minecraft.keyboardHandler.setClipboard(c.code());
+                    copied = c.code();
                     copiedAt = System.currentTimeMillis();
                 });
             }
-            y += h + ROW_GAP;
+            int textW = bx - 8 - (x + 6);
+            String code = FeedUtil.clip(this.font, c.code(), textW);
+            g.drawString(this.font, code, x + 6, y + 5, dead ? RetroUi.GRAY : RetroUi.ACCENT, false);
+            if (!nz(c.note()).isEmpty()) {
+                int nx = x + 6 + this.font.width(code) + 6;
+                if (textW - (nx - x - 6) > 20) {
+                    g.drawString(this.font, FeedUtil.clip(this.font, c.note(), textW - (nx - x - 6)), nx, y + 5,
+                            dead ? RetroUi.GRAY : RetroUi.FG, false);
+                }
+            }
+            g.drawString(this.font, FeedUtil.clip(this.font, codeMeta(c), textW), x + 6, y + 16, RetroUi.GRAY, false);
+            y += h + GAP;
         }
-        AccountUi.drawWrapped(g, this.font, tr("feed.manage.codes.note"), x, y + 2, w, RetroUi.GRAY);
-        return y + 14;
+        return AccountUi.drawWrapped(g, this.font, tr("feed.manage.codes.note"), x, y + 2, w, RetroUi.GRAY) + 4;
     }
 
-    private int renderMembers(GuiGraphics g, int y, int mouseX, int mouseY) {
-        int x = innerX();
-        int w = innerW();
+    /** "3/10 исп. · до 12.06 · по заявке" */
+    String codeMeta(CommunityApi.Code c) {
+        String uses = tr("feed.manage.codes.uses", c.uses(), c.maxUses() == null ? "\u221e" : String.valueOf(c.maxUses()));
+        long now = System.currentTimeMillis();
+        String until = c.expiresAt() == null ? tr("feed.manage.codes.forever")
+                : c.expiresAt() <= now ? tr("feed.manage.codes.expired", DAY.format(Instant.ofEpochMilli(c.expiresAt())))
+                : tr("feed.manage.codes.until", DAY.format(Instant.ofEpochMilli(c.expiresAt())));
+        String mode = tr(c.approval() ? "feed.manage.codes.approval" : "feed.manage.codes.instant");
+        return uses + " \u00b7 " + until + " \u00b7 " + mode;
+    }
+
+    private int renderMembers(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
         if (members == null) {
-            return loadingLine(g, y);
+            return loadingLine(g, x, y);
         }
         for (CommunityApi.Member m : members) {
-            int h = 20;
-            g.fill(x, y, x + w, y + h, RetroUi.HOVER_BG);
+            int h = 26;
             boolean self = FeedApiClient.isMine(m.id());
-            String role = tr("feed.manage.role." + (m.role() == null ? "member" : m.role()));
-            int roleColor = "owner".equals(m.role()) ? RetroUi.ACCENT : "mod".equals(m.role()) ? RetroUi.CYAN : RetroUi.GRAY;
-            int bx = x + w - 4;
+            boolean owner = "owner".equals(m.role());
+            boolean mod = "mod".equals(m.role());
+            RetroUi.drawBox(g, x, y, w, h, false);
+            if (owner) {
+                g.renderOutline(x, y, w, h, RetroUi.ACCENT);
+            }
+            int bx = x + w - 6;
+            int by = y + 7;
             String id = m.id();
             String who = m.nick() + " (@" + m.tag() + ")";
-            boolean canKick = !self && !"owner".equals(m.role()) && (community.isOwner() || "member".equals(m.role())) && community.isMod();
+            boolean canKick = community.isMod() && !self && !owner && (community.isOwner() || !mod);
             if (canKick) {
                 String kick = tr("feed.manage.members.kick");
-                int kw = buttonWidth(kick);
-                bx -= kw;
-                button(g, kick, bx, y + 2, kw, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
-                        new RetroConfirmScreen(this, Component.translatable("feed.manage.members.kick"),
-                                Component.translatable("feed.manage.members.kick_confirm", who), Component.translatable("feed.manage.members.kick"),
-                                true, () -> {
-                            this.minecraft.setScreen(this);
-                            act(CommunityApi.kick(community.id(), id, false), null);
-                        })));
+                bx -= RetroUi.buttonWidth(this.font, kick);
+                button(g, kick, bx, by, RetroUi.FG, mouseX, mouseY, () -> confirm("feed.manage.members.kick",
+                        Component.translatable("feed.manage.members.kick_confirm", who), true,
+                        () -> act(CommunityApi.kick(community.id(), id, false), null)));
                 bx -= 4;
             }
-            if (community.isOwner() && !self && !"owner".equals(m.role())) {
-                boolean isMod = "mod".equals(m.role());
-                String label = tr(isMod ? "feed.manage.members.demote" : "feed.manage.members.promote");
-                int lw = buttonWidth(label);
-                bx -= lw;
-                button(g, label, bx, y + 2, lw, BTN_H, RetroUi.FG, false, mouseX, mouseY,
-                        () -> act(CommunityApi.setRole(community.id(), id, isMod ? "member" : "mod"), null));
+            if (community.isOwner() && !self && !owner) {
+                String label = tr(mod ? "feed.manage.members.demote" : "feed.manage.members.promote");
+                bx -= RetroUi.buttonWidth(this.font, label);
+                button(g, label, bx, by, RetroUi.FG, mouseX, mouseY,
+                        () -> act(CommunityApi.setRole(community.id(), id, mod ? "member" : "mod"), null));
                 bx -= 4;
             }
-            int rw = this.font.width(role);
-            g.drawString(this.font, role, bx - rw - 4, y + 6, roleColor, false);
-            String name = FeedUtil.clip(this.font, m.nick() + " @" + m.tag(), bx - rw - 12 - x - 5);
-            g.drawString(this.font, name, x + 5, y + 6, self ? RetroUi.ACCENT : RetroUi.FG, false);
-            y += h + ROW_GAP;
+            String key = FeedApiClient.avatarKey(m.id(), m.avatar());
+            RetroUi.drawAvatar(g, this.font, key, m.nick(), x + 5, y + 5, 16);
+            int nx = x + 26;
+            int limit = bx - 6;
+            boolean hoverName = mouseX >= x && mouseX < nx + this.font.width(m.nick()) && mouseY >= y && mouseY < y + h && mouseX < limit;
+            String nick = FeedUtil.clip(this.font, m.nick(), Math.max(10, limit - nx));
+            g.drawString(this.font, nick, nx, y + 4, self ? RetroUi.ACCENT : hoverName ? RetroUi.STRONG : RetroUi.FG, false);
+            int tagX = nx + this.font.width(nick) + 4;
+            if (tagX < limit - 20) {
+                g.drawString(this.font, FeedUtil.clip(this.font, "@" + m.tag(), limit - tagX), tagX, y + 4, RetroUi.GRAY, false);
+            }
+            hit(x, y, Math.max(26, nx + this.font.width(nick) - x), h, () -> openPlayer(id));
+            String role = tr("feed.manage.role_line." + (m.role() == null ? "member" : m.role()));
+            int roleColor = owner ? RetroUi.ACCENT : mod ? RetroUi.CYAN : RetroUi.GRAY;
+            g.drawString(this.font, role, nx, y + 15, roleColor, false);
+            String via = m.via() != null && !m.via().isEmpty() ? tr("feed.manage.requests.via", via(m.via())) : "";
+            String since = m.joinedAt() > 0 ? tr("feed.manage.members.since", DAY.format(Instant.ofEpochMilli(m.joinedAt()))) : "";
+            String tail = owner ? tr("feed.manage.members.created")
+                    : via.isEmpty() ? since : since.isEmpty() ? via : via + " \u00b7 " + since;
+            if (!tail.isEmpty()) {
+                int rx = nx + this.font.width(role);
+                g.drawString(this.font, FeedUtil.clip(this.font, " \u00b7 " + tail, Math.max(0, limit - rx)), rx, y + 15,
+                        owner ? RetroUi.ACCENT : RetroUi.GRAY, false);
+            }
+            y += h + GAP;
         }
         return y;
     }
 
-    private int renderRequests(GuiGraphics g, int y, int mouseX, int mouseY) {
-        int x = innerX();
-        int w = innerW();
+    private int renderRequests(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
         if (requests == null) {
-            return loadingLine(g, y);
+            return loadingLine(g, x, y);
         }
         if (requests.isEmpty()) {
-            return emptyLine(g, y, "feed.manage.requests.empty");
+            return emptyLine(g, x, y, w, "feed.manage.requests.empty");
         }
         for (CommunityApi.JoinRequest r : requests) {
-            int h = 26;
-            g.fill(x, y, x + w, y + h, RetroUi.HOVER_BG);
-            String deny = tr("feed.manage.requests.deny");
-            String accept = tr("feed.manage.requests.accept");
-            int dw = buttonWidth(deny);
-            int aw = buttonWidth(accept);
-            int bx = x + w - 5 - dw;
+            int h = 40;
+            RetroUi.drawBox(g, x, y, w, h, false);
+            g.renderOutline(x, y, w, h, RetroUi.ACCENT);
+            RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(r.id(), r.avatar()), r.nick(), x + 5, y + 5, 16);
+            int nx = x + 26;
+            String nick = FeedUtil.clip(this.font, r.nick(), w - 40);
+            g.drawString(this.font, nick, nx, y + 4, RetroUi.FG, false);
+            String tail = "@" + r.tag() + (r.createdAt() > 0 ? " \u00b7 " + FeedTime.ago(Instant.ofEpochMilli(r.createdAt()).toString()) : "");
+            int tagX = nx + this.font.width(nick) + 4;
+            g.drawString(this.font, FeedUtil.clip(this.font, tail, x + w - 6 - tagX), tagX, y + 4, RetroUi.GRAY, false);
             String id = r.id();
-            button(g, deny, bx, y + 5, dw, BTN_H, RetroUi.FG, false, mouseX, mouseY,
-                    () -> act(CommunityApi.decide(community.id(), id, false), null));
-            button(g, accept, bx - 5 - aw, y + 5, aw, BTN_H, AccountUi.GREEN, false, mouseX, mouseY,
-                    () -> act(CommunityApi.decide(community.id(), id, true), null));
-            int tw = bx - aw - 15 - x;
-            g.drawString(this.font, FeedUtil.clip(this.font, r.nick() + " @" + r.tag(), tw), x + 5, y + 4, RetroUi.FG, false);
-            String via = r.via() == null ? "" : tr("feed.manage.requests.via", r.via());
-            g.drawString(this.font, FeedUtil.clip(this.font, via, tw), x + 5, y + 15, RetroUi.GRAY, false);
-            y += h + ROW_GAP;
+            hit(x, y, Math.max(26, nx + this.font.width(nick) - x), 14, () -> openPlayer(id));
+            String via = r.via() == null || r.via().isEmpty() ? "" : tr("feed.manage.requests.via", via(r.via()));
+            g.drawString(this.font, FeedUtil.clip(this.font, via, w - 32), nx, y + 14, RetroUi.GRAY, false);
+            String accept = tr("feed.manage.requests.accept");
+            int aw = button(g, accept, nx, y + 24, AccountUi.GREEN, mouseX, mouseY,
+                    () -> act(CommunityApi.decide(community.id(), id, true), Component.translatable("feed.notifs.accepted_done")));
+            button(g, tr("feed.manage.requests.deny"), nx + aw + 4, y + 24, RetroUi.FG, mouseX, mouseY,
+                    () -> act(CommunityApi.decide(community.id(), id, false), Component.translatable("feed.notifs.declined_done")));
+            y += h + GAP;
         }
         return y;
     }
 
-    private void renderSettings(GuiGraphics g, int mouseX, int mouseY) {
-        int x = innerX();
-        int y = listTop();
-        int by = listBottom() - BTN_H - 6;
+    private void renderSettings(GuiGraphics g, int x, int w, int mouseX, int mouseY) {
+        int y = LIST_Y;
         if (community.isOwner()) {
-            g.drawString(this.font, tr("feed.manage.settings.name"), x, y, RetroUi.FG, false);
+            label(g, "feed.manage.settings.name", x, y);
             y += ROW;
-            g.drawString(this.font, tr("feed.manage.settings.description"), x, y, RetroUi.FG, false);
+            label(g, "feed.manage.settings.description", x, y);
             y += ROW;
-            g.drawString(this.font, tr("feed.manage.settings.about"), x, y, RetroUi.FG, false);
-            y += 10 + ABOUT_H + 4;
-            g.drawString(this.font, tr("feed.manage.settings.links"), x, y, RetroUi.FG, false);
+            label(g, "feed.manage.settings.about", x, y);
+            y += ABOUT_H + 12;
+            label(g, "feed.manage.settings.links", x, y);
+            y += ROW;
+            y = discordRow(g, x, y, w, mouseX, mouseY) + 4;
+            boolean changed = draft != null && (!draft[0].trim().equals(community.name()) || !draft[1].trim().equals(nz(community.description()))
+                    || !draft[2].trim().equals(nz(community.about())) || !draft[3].trim().equals(nz(community.links())));
             String save = tr("feed.manage.settings.save");
-            button(g, save, x, by, 0, BTN_H, RetroUi.ACCENT, false, mouseX, mouseY, () -> {
-                busy = true;
-                CommunityApi.update(community.id(), nameBox.getValue().trim(), descBox.getValue().trim(),
-                                aboutBox.getValue().trim(), linksBox.getValue().trim())
-                        .whenComplete((c, ex) -> this.minecraft.execute(() -> {
-                            busy = false;
-                            if (ex != null) {
-                                setStatus(CommunityApi.describe(ex), RetroUi.ERROR);
-                                return;
-                            }
-                            community = c;
-                            setStatus(Component.translatable("feed.manage.settings.saved"), AccountUi.GREEN);
-                            parent.loadCommunities();
-                        }));
-            });
+            button(g, save, x + LABEL_W, y, changed ? RetroUi.ACCENT : RetroUi.GRAY, mouseX, mouseY, changed ? this::save : null);
             String del = tr("feed.manage.settings.delete");
-            button(g, del, x + innerW() - buttonWidth(del), by, 0, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
-                    new RetroConfirmScreen(this, Component.translatable("feed.manage.settings.delete"),
-                            Component.translatable("feed.manage.settings.delete_confirm", community.name()),
-                            Component.translatable("feed.manage.settings.delete"), true,
-                            () -> leaveOrDelete(CommunityApi.remove(community.id())))));
-        } else {
-            String info = community.description() == null || community.description().isEmpty()
-                    ? tr("feed.manage.settings.no_description") : community.description();
-            if (!nz(community.about()).isEmpty()) {
-                info += "\n\n" + tr("feed.manage.settings.about") + ":\n" + community.about();
-            }
-            if (!nz(community.links()).isEmpty()) {
-                info += "\n\n" + tr("feed.manage.settings.links") + ": " + community.links();
-            }
-            AccountUi.drawWrapped(g, this.font, info, x, y, innerW(), RetroUi.FG);
-            String leave = tr("feed.manage.settings.leave");
-            button(g, leave, x, by, 0, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
-                    new RetroConfirmScreen(this, Component.translatable("feed.manage.settings.leave"),
-                            Component.translatable("feed.manage.settings.leave_confirm", community.name()),
-                            Component.translatable("feed.manage.settings.leave"), true,
-                            () -> leaveOrDelete(CommunityApi.leave(community.id())))));
+            button(g, del, x + w - RetroUi.buttonWidth(this.font, del), y, RetroUi.ERROR, mouseX, mouseY,
+                    () -> confirm("feed.manage.settings.delete",
+                            Component.translatable("feed.manage.settings.delete_confirm", community.name()), true,
+                            () -> leaveOrDelete(CommunityApi.remove(community.id()))));
+            return;
         }
+        int vx = x + LABEL_W;
+        int vw = w - LABEL_W;
+        label(g, "feed.manage.settings.description", x, y);
+        String desc = nz(community.description()).isEmpty() ? tr("feed.manage.settings.no_description") : community.description();
+        y = Math.max(y + ROW - 4, AccountUi.drawWrapped(g, this.font, desc, vx, y + 4, vw, RetroUi.FG) + 6);
+        if (!nz(community.about()).isEmpty()) {
+            label(g, "feed.manage.settings.about", x, y);
+            y = Math.max(y + ROW - 4, AccountUi.drawWrapped(g, this.font, community.about(), vx, y + 4, vw, RetroUi.FG) + 6);
+        }
+        if (!nz(community.links()).isEmpty()) {
+            label(g, "feed.manage.settings.links", x, y);
+            y = Math.max(y + ROW - 4, AccountUi.drawWrapped(g, this.font, community.links(), vx, y + 4, vw, RetroUi.CYAN) + 6);
+        }
+        label(g, "feed.manage.settings.role", x, y);
+        String role = tr("feed.manage.role_line." + (community.role() == null ? "member" : community.role()));
+        g.drawString(this.font, role, vx, y + 4, community.isMod() ? RetroUi.CYAN : RetroUi.FG, false);
+        y += ROW;
+        y = discordRow(g, x, y, w, mouseX, mouseY) + 4;
+        String leave = tr("feed.manage.settings.leave");
+        button(g, leave, x, y, RetroUi.ERROR, mouseX, mouseY, () -> confirm("feed.manage.settings.leave",
+                Component.translatable("feed.manage.settings.leave_confirm", community.name()), true,
+                () -> leaveOrDelete(CommunityApi.leave(community.id()))));
+    }
+
+    private void label(GuiGraphics g, String key, int x, int y) {
+        g.drawString(this.font, tr(key), x, y + 4, RetroUi.GRAY, false);
+    }
+
+    private int discordRow(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
+        String url = community.discordUrl();
+        if (url == null) {
+            return y;
+        }
+        label(g, "feed.manage.settings.discord", x, y);
+        g.drawString(this.font, tr("feed.manage.settings.forum"), x + LABEL_W, y + 4, RetroUi.FG, false);
+        String open = tr("feed.manage.settings.open");
+        button(g, open, x + w - RetroUi.buttonWidth(this.font, open), y + 1, RetroUi.FG, mouseX, mouseY,
+                () -> ConfirmLinkScreen.confirmLinkNow(this, url));
+        return y + ROW;
+    }
+
+    private void save() {
+        busy = true;
+        status = null;
+        CommunityApi.update(community.id(), draft[0].trim(), draft[1].trim(), draft[2].trim(), draft[3].trim())
+                .whenComplete((c, ex) -> this.minecraft.execute(() -> {
+                    busy = false;
+                    if (ex != null) {
+                        setStatus(CommunityApi.describe(ex), RetroUi.ERROR);
+                        return;
+                    }
+                    community = c;
+                    setStatus(Component.translatable("feed.manage.settings.saved"), AccountUi.GREEN);
+                    home().loadCommunities();
+                }));
     }
 
     private void leaveOrDelete(CompletableFuture<Void> f) {
-        this.minecraft.setScreen(this);
         busy = true;
         f.whenComplete((r, ex) -> this.minecraft.execute(() -> {
             busy = false;
@@ -417,20 +555,69 @@ public class CommunityScreen extends ModalScreen {
                 return;
             }
             CommunityApi.mine().whenComplete((m, e2) -> this.minecraft.execute(() -> {
-                parent.switchSpace("global");
-                parent.loadCommunities();
-                this.minecraft.setScreen(parent);
+                home().loadCommunities();
+                openFeed("global");
             }));
         }));
     }
 
-    private int loadingLine(GuiGraphics g, int y) {
-        g.drawString(this.font, tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : ""), innerX(), y + 4, RetroUi.GRAY, false);
-        return y + 16;
+    /** "MF-8Q2K-7XPL" as is, a note in quotes: «для Discord-канала». */
+    private static String via(String v) {
+        return v.matches("[A-Z0-9-]+") ? v : "\u00ab" + v + "\u00bb";
     }
 
-    private int emptyLine(GuiGraphics g, int y, String key) {
-        return AccountUi.drawWrapped(g, this.font, tr(key), innerX(), y + 4, innerW(), RetroUi.GRAY);
+    private int loadingLine(GuiGraphics g, int x, int y) {
+        g.drawString(this.font, tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : ""), x + 6, y + 6, RetroUi.GRAY, false);
+        return y + 18;
+    }
+
+    private int emptyLine(GuiGraphics g, int x, int y, int w, String key) {
+        return AccountUi.drawWrapped(g, this.font, tr(key), x + 6, y + 6, w - 12, RetroUi.GRAY);
+    }
+
+    // ---------- immediate-mode controls ----------
+
+    private int button(GuiGraphics g, String label, int x, int y, int color, int mouseX, int mouseY, Runnable action) {
+        int w = RetroUi.buttonWidth(this.font, label);
+        boolean enabled = action != null && !busy;
+        boolean hover = enabled && mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + BTN_H;
+        RetroUi.drawButton(g, this.font, label, x, y, w, BTN_H, hover, enabled, color);
+        if (enabled) {
+            hit(x, y, w, BTN_H, action);
+        }
+        return w;
+    }
+
+    private int chip(GuiGraphics g, String label, int x, int y, int color, boolean on, int mouseX, int mouseY, Runnable action) {
+        int w = RetroUi.chipWidth(this.font, label);
+        boolean hover = !on && mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + RetroUi.CHIP_H;
+        RetroUi.drawChip(g, this.font, label, x, y, hover ? RetroUi.FG : color, on);
+        hit(x, y, w, RetroUi.CHIP_H, action);
+        return w;
+    }
+
+    private void hit(int x, int y, int w, int h, Runnable action) {
+        btns.add(new Btn(x, y, w, h, clipTop, clipBottom, action));
+    }
+
+    // ---------- input ----------
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (super.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        if (button != 0 || busy) {
+            return false;
+        }
+        for (Btn b : new ArrayList<>(btns)) {
+            if (mouseX >= b.x() && mouseX < b.x() + b.w() && mouseY >= b.y() && mouseY < b.y() + b.h()
+                    && mouseY >= b.top() && mouseY < b.bottom()) {
+                b.action().run();
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -438,8 +625,8 @@ public class CommunityScreen extends ModalScreen {
         if (super.mouseScrolled(mouseX, mouseY, dx, dy)) {
             return true;
         }
-        int viewport = listBottom() - 2 - listTop();
-        scroll = Math.max(0, Math.min(Math.max(0, contentH - viewport), scroll - (int) (dy * 16)));
+        int viewport = this.height - 4 - LIST_Y;
+        scroll = Math.max(0, Math.min(Math.max(0, contentHeight - viewport), scroll - (int) (dy * SCROLL_STEP)));
         return true;
     }
 }

@@ -19,7 +19,7 @@ import java.util.concurrent.CompletionException;
 public final class CommunityApi {
 
     public record Community(String id, String name, String description, int members, String ownerId,
-                            String role, int unread, int requests, String about, String links) {
+                            String role, int unread, int requests, String about, String links, String discordUrl) {
         public boolean isMod() {
             return "owner".equals(role) || "mod".equals(role);
         }
@@ -41,9 +41,9 @@ public final class CommunityApi {
 
     public record Code(String code, String note, int uses, Integer maxUses, Long expiresAt, boolean approval, boolean dead) {}
 
-    public record Member(String id, String tag, String nick, String role, String via) {}
+    public record Member(String id, String tag, String nick, String role, String via, String avatar, long joinedAt) {}
 
-    public record JoinRequest(String id, String tag, String nick, String via, long createdAt) {}
+    public record JoinRequest(String id, String tag, String nick, String via, long createdAt, String avatar) {}
 
     public record JoinResult(String status, Community community) {}
 
@@ -157,16 +157,32 @@ public final class CommunityApi {
         });
     }
 
-    public static CompletableFuture<Code> createCode(String id, boolean approval, Integer maxUses, Integer expiresInDays) {
-        JsonObject b = new JsonObject();
-        b.addProperty("approval", approval);
-        if (maxUses != null) {
-            b.addProperty("maxUses", maxUses);
+    /**
+     * New invite code. code: own text or null for a random one; maxUses / expiresInDays: 0 = no limit.
+     */
+    public static CompletableFuture<Code> createCode(String id, String code, String note, boolean approval, int maxUses, int expiresInDays) {
+        JsonObject b = codeBody(note, approval, maxUses, expiresInDays);
+        if (code != null && !code.isBlank()) {
+            b.addProperty("code", code.trim());
         }
+        return call("POST", "/v2/communities/" + id + "/codes", b).thenApply(o -> code(o.getAsJsonObject("code")));
+    }
+
+    /** Changes a code; expiresInDays: null = keep the current date, 0 = forever. */
+    public static CompletableFuture<Code> updateCode(String id, String code, String note, boolean approval, int maxUses, Integer expiresInDays) {
+        JsonObject b = codeBody(note, approval, maxUses, expiresInDays);
+        return call("PATCH", "/v2/communities/" + id + "/codes/" + code, b).thenApply(o -> code(o.getAsJsonObject("code")));
+    }
+
+    private static JsonObject codeBody(String note, boolean approval, int maxUses, Integer expiresInDays) {
+        JsonObject b = new JsonObject();
+        b.addProperty("note", note == null ? "" : note.trim());
+        b.addProperty("approval", approval);
+        b.addProperty("maxUses", maxUses);
         if (expiresInDays != null) {
             b.addProperty("expiresInDays", expiresInDays);
         }
-        return call("POST", "/v2/communities/" + id + "/codes", b).thenApply(o -> code(o.getAsJsonObject("code")));
+        return b;
     }
 
     public static CompletableFuture<Void> revokeCode(String id, String code) {
@@ -181,7 +197,8 @@ public final class CommunityApi {
             for (JsonElement e : arr(o, "members")) {
                 JsonObject m = e.getAsJsonObject();
                 JsonObject a = m.getAsJsonObject("account");
-                list.add(new Member(str(a, "id"), str(a, "tag"), str(a, "nick"), str(m, "role"), str(m, "via")));
+                list.add(new Member(str(a, "id"), str(a, "tag"), str(a, "nick"), str(m, "role"), str(m, "via"), str(a, "avatar"),
+                        m.has("joinedAt") && !m.get("joinedAt").isJsonNull() ? m.get("joinedAt").getAsLong() : 0L));
             }
             return list;
         });
@@ -204,7 +221,7 @@ public final class CommunityApi {
                 JsonObject r = e.getAsJsonObject();
                 JsonObject a = r.getAsJsonObject("account");
                 list.add(new JoinRequest(str(a, "id"), str(a, "tag"), str(a, "nick"), str(r, "via"),
-                        r.has("createdAt") ? r.get("createdAt").getAsLong() : 0L));
+                        r.has("createdAt") ? r.get("createdAt").getAsLong() : 0L, str(a, "avatar")));
             }
             return list;
         });
@@ -254,7 +271,7 @@ public final class CommunityApi {
 
     private static Community community(JsonObject o) {
         return new Community(str(o, "id"), str(o, "name"), str(o, "description"), num(o, "members"), str(o, "ownerId"),
-                str(o, "role"), num(o, "unread"), num(o, "requests"), str(o, "about"), str(o, "links"));
+                str(o, "role"), num(o, "unread"), num(o, "requests"), str(o, "about"), str(o, "links"), str(o, "discordUrl"));
     }
 
     private static Code code(JsonObject o) {
