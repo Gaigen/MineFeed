@@ -87,6 +87,8 @@ public abstract class ModalScreen extends RetroScreen {
             } catch (RuntimeException e) {
                 backdropFailed = true;
             }
+            // Text is batched until the end of the frame; draw the feed's text now, under the dialog.
+            g.flush();
         } else {
             g.fill(0, 0, this.width, this.height, RetroUi.BG);
         }
@@ -102,6 +104,15 @@ public abstract class ModalScreen extends RetroScreen {
                 AccountUi.drawField(g, f);
             }
         }
+    }
+
+    /** Window resized: re-layout the feed behind too, so the backdrop keeps matching. */
+    @Override
+    public void resize(net.minecraft.client.Minecraft mc, int w, int h) {
+        if (parent != null) {
+            parent.resize(mc, w, h);
+        }
+        super.resize(mc, w, h);
     }
 
     @Override
