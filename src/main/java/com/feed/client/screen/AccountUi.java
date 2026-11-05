@@ -121,7 +121,7 @@ public final class AccountUi {
         int w = box.getWidth() + 8;
         boolean focused = box.isFocused();
         g.fill(x, y, x + w, y + FIELD_H, focused ? RetroUi.HOVER_BG : RetroUi.BG);
-        g.renderOutline(x, y, w, FIELD_H, !box.isActive() ? RetroUi.SHADOW : focused ? RetroUi.FG : RetroUi.GRAY);
+        g.renderOutline(x, y, w, FIELD_H, !box.isActive() ? RetroUi.SHADOW : focused ? RetroUi.ACCENT : RetroUi.GRAY);
     }
 
     public static void drawLabel(GuiGraphics g, Font font, Component text, int x, int y) {

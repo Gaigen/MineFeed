@@ -19,6 +19,6 @@ public class RetroTextArea extends MultiLineEditBox {
     protected void renderBorder(GuiGraphics g, int x, int y, int w, int h) {
         boolean focused = isFocused();
         g.fill(x, y, x + w, y + h, focused ? RetroUi.HOVER_BG : RetroUi.BG);
-        g.renderOutline(x, y, w, h, focused ? RetroUi.FG : RetroUi.GRAY);
+        g.renderOutline(x, y, w, h, focused ? RetroUi.ACCENT : RetroUi.GRAY);
     }
 }

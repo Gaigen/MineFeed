@@ -229,7 +229,6 @@ public class ComposeScreen extends Screen {
             cx += RetroUi.chipWidth(this.font, label) + 6;
         }
 
-        g.renderOutline(x + 9, y + 24 + RetroUi.CHIP_H + 5, w - 18, INPUT_H + 2, RetroUi.FG);
 
         int attachY = y + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 8;
         if (attached != null) {
