@@ -170,7 +170,10 @@ test("solve and report", async () => {
   assert.equal((await api("POST", `/v2/posts/${help.id}/solve`, { key: b.key, body: {} })).status, 403);
   const s = await api("POST", `/v2/posts/${help.id}/solve`, { key: a.key, body: { solved: true } });
   assert.equal(s.data.post.solved, true);
-  assert.deepEqual(calls.find((c) => c.method === "PATCH").body, { applied_tags: ["t2", "t5"] });
+  assert.deepEqual(calls.find((c) => c.method === "PATCH").body, { locked: true, applied_tags: ["t2", "t5"] });
+  calls.length = 0;
+  await api("POST", `/v2/posts/${help.id}/solve`, { key: a.key, body: { solved: false } });
+  assert.deepEqual(calls.find((c) => c.method === "PATCH").body, { locked: false, applied_tags: ["t2"] });
   const rep = await api("POST", "/v2/reports", { key: b.key, body: { postId: talk.id, reason: "spam" } });
   assert.equal(rep.status, 200);
   const msg = calls.find((c) => c.path === "/api/v10/channels/777/messages");
@@ -188,7 +191,7 @@ test("comment on a thread removed in Discord marks the post deleted", async () =
 });
 
 test("bot events", async () => {
-  const { api, user, env } = setup();
+  const { api, user, env, calls } = setup();
   const auth = "Bearer bot-secret-0123456789";
   assert.equal((await api("POST", "/v2/bot/events", { body: { events: [] } })).status, 401);
   assert.equal((await api("POST", "/v2/bot/events", { auth: "Bearer wrong-secret-xxxxxxxx", body: { events: [] } })).status, 401);
@@ -222,6 +225,7 @@ test("bot events", async () => {
     ev("MODERATOR", { discordId: "d-alice", moderator: true }),
   ] }, now: T0 + 6000 });
   assert.deepEqual(r.data.results, ["edit", "comment", "post", "solved", "moderator"]);
+  assert.ok(calls.some((c) => c.method === "PATCH" && c.path === `/api/v10/channels/${post.id}` && c.body.locked === true));
   const feed = await api("GET", "/v2/feed", { key: a.key });
   const dpost = feed.data.posts.find((p) => p.id === "555");
   assert.equal(dpost.type, "gg");

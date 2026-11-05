@@ -1,7 +1,7 @@
 // Events from the Discord gateway bot (runs on the VPS). It forwards raw-ish Discord events in batches;
 // everything here is idempotent, so the bot may safely resend a batch.
 import { HttpError, sha256Hex } from "./util.js";
-import { snowflakeTime } from "./dapi.js";
+import { dapi, snowflakeTime } from "./dapi.js";
 import { TYPES, MAX_POST, markPostDeleted, markCommentDeleted } from "./feed.js";
 import * as N from "./notify.js";
 import * as C from "./communities.js";
@@ -122,6 +122,8 @@ async function onThreadUpdate(env, d, now) {
   const solved = d.applied_tags.includes(solvedTag) ? 1 : 0;
   if (solved === post.solved) return "same";
   await env.DB.prepare("UPDATE posts SET solved = ?, updated_at = ? WHERE id = ?").bind(solved, now, post.id).run();
+  // the Solved tag was set/removed in Discord: lock/unlock the thread to match
+  await dapi(env, "PATCH", `/channels/${post.id}`, { body: { locked: !!solved }, allow404: true });
   return "solved";
 }
 

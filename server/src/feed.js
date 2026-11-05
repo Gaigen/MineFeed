@@ -423,7 +423,10 @@ export async function solve(env, account, id, body, now) {
   const solved = body.solved === undefined ? !post.solved : !!body.solved;
   const space = await getSpace(env, post.space);
   const tags = [space.tagIds.help, solved ? space.tagIds.solved : null].filter(Boolean);
-  if (tags.length) await dapi(env, "PATCH", `/channels/${post.id}`, { body: { applied_tags: tags }, allow404: true });
+  // solved questions are locked in Discord too (no new replies there; the mod already blocks them)
+  const patch = { locked: solved };
+  if (tags.length) patch.applied_tags = tags;
+  await dapi(env, "PATCH", `/channels/${post.id}`, { body: patch, allow404: true });
   await env.DB.prepare("UPDATE posts SET solved = ?, updated_at = ? WHERE id = ?").bind(solved ? 1 : 0, now, post.id).run();
   return { post: postOut(await loadPost(env, post.id), (await myReactions(env, account, [post.id]))[post.id]) };
 }
