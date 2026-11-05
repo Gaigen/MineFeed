@@ -16,6 +16,8 @@ export const LIMITS = {
   post: { max: 10, windowMs: 3_600_000 },     // per account per hour
   image: { max: 20, windowMs: 86_400_000 },   // posts with a picture per account per day
   comment: { max: 60, windowMs: 3_600_000 },  // per account per hour
+  edit: { max: 30, windowMs: 3_600_000 },     // post/comment edits per account per hour
+  vote: { max: 120, windowMs: 3_600_000 },    // poll votes per account per hour
   report: { max: 10, windowMs: 3_600_000 },   // per account per hour
   community: { max: 3, windowMs: 86_400_000 }, // community creations per account per day
   apply: { max: 3, windowMs: 86_400_000 },    // community applications per account per day

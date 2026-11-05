@@ -14,6 +14,11 @@ export const MAX_COMMENT = 300;
 export const SYNC_OVERLAP = 3000;      // re-send changes this close to the cursor (clock jitter)
 export const SYNC_MAX_AGE = 86_400_000; // older cursors must reload the feed
 const PAGE = 20;
+const DAY = 86_400_000;
+export const MAX_PINS = 3;
+export const POLL_MIN = 2;
+export const POLL_MAX = 4;
+export const POLL_OPTION = 40;
 const COMMENTS_PAGE = 50;
 
 const AUTHOR_COLS = "a.tag AS a_tag, a.nick AS a_nick, a.skin AS a_skin, a.avatar AS a_av, a.discord_id AS a_did, a.discord_avatar AS a_dav";
@@ -128,6 +133,7 @@ export function postOut(r, my) {
     my: my ?? -1,
     solved: !!r.solved,
     pinned: !!r.pinned,
+    editedAt: r.edited_at || null,
     image: r.image ? JSON.parse(r.image) : null,
   };
 }
@@ -141,6 +147,7 @@ export function commentOut(r) {
     author: author(r),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    editedAt: r.edited_at || null,
     image: r.image ? JSON.parse(r.image) : null,
   };
 }
@@ -155,8 +162,106 @@ async function myReactions(env, account, ids) {
 
 async function postsOut(env, account, rows) {
   await freshen(env, rows, "posts");
-  const my = await myReactions(env, account, rows.filter((r) => !r.deleted).map((r) => r.id));
-  return rows.map((r) => postOut(r, my[r.id]));
+  const live = rows.filter((r) => !r.deleted).map((r) => r.id);
+  const my = await myReactions(env, account, live);
+  const polls = await pollsFor(env, account, live);
+  return rows.map((r) => {
+    const out = postOut(r, my[r.id]);
+    if (polls[r.id]) out.poll = polls[r.id];
+    return out;
+  });
+}
+
+// ---------- polls ----------
+
+/** {postId: {options: [text], votes: [n], my: index|-1}} for the posts that have a poll. */
+async function pollsFor(env, account, ids) {
+  if (!ids.length) return {};
+  const marks = ids.map(() => "?").join(",");
+  const { results: polls } = await env.DB.prepare(`SELECT post_id, options FROM polls WHERE post_id IN (${marks})`).bind(...ids).all();
+  if (!polls.length) return {};
+  const pids = polls.map((p) => p.post_id);
+  const pm = pids.map(() => "?").join(",");
+  const [{ results: counts }, { results: mine }] = await Promise.all([
+    env.DB.prepare(`SELECT post_id, option, COUNT(*) AS n FROM poll_votes WHERE post_id IN (${pm}) GROUP BY post_id, option`).bind(...pids).all(),
+    env.DB.prepare(`SELECT post_id, option FROM poll_votes WHERE account_id = ? AND post_id IN (${pm})`).bind(account.id, ...pids).all(),
+  ]);
+  const out = {};
+  for (const p of polls) {
+    const options = JSON.parse(p.options);
+    out[p.post_id] = { options, votes: options.map(() => 0), my: -1 };
+  }
+  for (const c of counts) if (out[c.post_id] && c.option < out[c.post_id].votes.length) out[c.post_id].votes[c.option] = c.n;
+  for (const m of mine) if (out[m.post_id]) out[m.post_id].my = m.option;
+  return out;
+}
+
+/** Validates {options: [...]} of a new post: 2-4 short unique options, or null for no poll. */
+function parsePoll(raw) {
+  if (raw == null) return null;
+  const list = Array.isArray(raw.options) ? raw.options : null;
+  if (!list) throw new HttpError(400, "bad_poll", "Неверный опрос");
+  const options = list.map((o) => String(o ?? "").replace(/\s+/g, " ").replace(CTRL, "").replace(/\u00a7./gu, "").trim()).filter(Boolean);
+  if (options.length < POLL_MIN || options.length > POLL_MAX) throw new HttpError(400, "bad_poll", `В опросе от ${POLL_MIN} до ${POLL_MAX} вариантов`);
+  if (options.some((o) => [...o].length > POLL_OPTION)) throw new HttpError(400, "bad_poll", `Вариант длиннее ${POLL_OPTION} символов`);
+  if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) throw new HttpError(400, "bad_poll", "Варианты повторяются");
+  return options;
+}
+
+/** What the Discord copy of a post says: the text plus the poll options (voting happens in the mod). */
+function discordContent(text, options) {
+  if (!options) return text;
+  const lines = options.map((o, i) => `${["1️⃣", "2️⃣", "3️⃣", "4️⃣"][i]} ${o}`);
+  return `${text}\n\n📊 ${lines.join("\n")}\n-# голосование — в моде MineFeed`;
+}
+
+async function pollOptions(env, postId) {
+  const p = await env.DB.prepare("SELECT options FROM polls WHERE post_id = ?").bind(postId).first();
+  return p ? JSON.parse(p.options) : null;
+}
+
+/** POST /v2/posts/:id/vote {option: index, or -1 to take the vote back} */
+export async function vote(env, account, id, body, now) {
+  const post = await loadPost(env, id);
+  await spaceFor(env, account, post.space);
+  const options = await pollOptions(env, post.id);
+  if (!options) throw new HttpError(404, "no_poll", "В этом посте нет опроса");
+  const option = Number.isInteger(body.option) ? body.option : null;
+  if (option === null || option < -1 || option >= options.length) throw new HttpError(400, "bad_option", "Неизвестный вариант");
+  if (post.solved) throw new HttpError(400, "closed", "Опрос закрыт");
+  await rateLimit(env, "vote", account.id, now);
+  const stmts = [env.DB.prepare("DELETE FROM poll_votes WHERE post_id = ? AND account_id = ?").bind(post.id, account.id)];
+  if (option >= 0) {
+    stmts.push(env.DB.prepare("INSERT INTO poll_votes (post_id, account_id, option, created_at) VALUES (?, ?, ?, ?)").bind(post.id, account.id, option, now));
+  }
+  stmts.push(env.DB.prepare("UPDATE posts SET updated_at = ? WHERE id = ?").bind(now, post.id));
+  await env.DB.batch(stmts);
+  return { poll: (await pollsFor(env, account, [post.id]))[post.id] };
+}
+
+// ---------- pins ----------
+
+/** POST /v2/posts/:id/pin {pinned} — community owner/mod or a server moderator; at most MAX_PINS per space. */
+export async function pin(env, account, id, body, now) {
+  const post = await loadPost(env, id);
+  const space = await spaceForModeration(env, account, post.space);
+  const allowed = !!account.moderator || (post.space !== "global" && (space.role === "owner" || space.role === "mod"));
+  if (!allowed) throw new HttpError(403, "forbidden", "Закреплять могут только модераторы");
+  const pinned = body.pinned === undefined ? !post.pinned : !!body.pinned;
+  if (pinned && !post.pinned) {
+    const { results } = await env.DB.prepare(
+      "SELECT id FROM posts WHERE space = ? AND pinned > 0 AND deleted = 0 ORDER BY pinned DESC"
+    ).bind(post.space).all();
+    for (const old of results.slice(MAX_PINS - 1)) {
+      await env.DB.prepare("UPDATE posts SET pinned = 0, updated_at = ? WHERE id = ?").bind(now, old.id).run();
+    }
+  }
+  await env.DB.prepare("UPDATE posts SET pinned = ?, updated_at = ? WHERE id = ?").bind(pinned ? now : 0, now, post.id).run();
+  if (account.id !== post.author_id) {
+    await modLog(env, account.id, pinned ? "pin" : "unpin", { target: post.author_id, postId: post.id, space: post.space }, now);
+  }
+  const [out] = await postsOut(env, account, [await env.DB.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(post.id).first()]);
+  return { post: out };
 }
 
 function cursorOf(r) {
@@ -210,17 +315,35 @@ export async function feed(env, account, q, now) {
   if (hashtag) { where.push("p.id IN (SELECT post_id FROM post_tags WHERE tag = ? AND space = ?)"); binds.push(hashtag, space.id); }
   const authorId = q.get("author");
   if (authorId && /^[0-9a-f-]{36}$/.test(authorId)) { where.push("p.author_id = ?"); binds.push(authorId); }
+  const top = q.get("sort") === "top";
+  if (top) {
+    // most reacted/commented posts of the last day or week; one page, no cursor
+    const days = q.get("days") === "7" ? 7 : 1;
+    where.push("p.created_at > ?"); binds.push(now - days * DAY);
+    const { results } = await env.DB.prepare(
+      `${POST_SELECT} WHERE ${where.join(" AND ")} AND (p.re0 + p.re1 + p.comments) > 0
+       ORDER BY (p.re0 + p.re1) * 2 + p.comments DESC, p.created_at DESC LIMIT ?`
+    ).bind(...binds, Math.min(limit, 30)).all();
+    return { posts: await postsOut(env, account, results), next: null, now };
+  }
   const before = parseCursor(q.get("before"));
   if (before) { where.push("(p.created_at, p.id) < (?, ?)"); binds.push(...before); }
   const { results } = await env.DB.prepare(
     `${POST_SELECT} WHERE ${where.join(" AND ")} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
   ).bind(...binds, limit + 1).all();
+  let pinned;
+  if (!before && !hashtag && !authorId && !type) {
+    const pr = await env.DB.prepare(
+      `${POST_SELECT} WHERE p.space = ? AND p.pinned > 0 AND p.deleted = 0 ORDER BY p.pinned DESC LIMIT ${MAX_PINS}`
+    ).bind(space.id).all();
+    pinned = await postsOut(env, account, pr.results);
+  }
   if (!before && space.id !== "global") {
     await env.DB.prepare("UPDATE members SET read_at = ? WHERE community_id = ? AND account_id = ?").bind(now, space.id, account.id).run();
   }
   const more = results.length > limit;
   const rows = results.slice(0, limit);
-  return { posts: await postsOut(env, account, rows), next: more ? cursorOf(rows[rows.length - 1]) : null, now };
+  return { posts: await postsOut(env, account, rows), next: more ? cursorOf(rows[rows.length - 1]) : null, now, ...(pinned ? { pinned } : {}) };
 }
 
 /** GET /v2/posts/:id — the post and its latest comments. */
@@ -297,12 +420,13 @@ export async function createPost(env, account, body, now) {
   const space = await spaceFor(env, account, body.space);
   if (!TYPES.includes(body.type)) throw new HttpError(400, "bad_type", "Неизвестный тип поста");
   const file = body.image ? parseUpload(body.image) : null;
-  const text = file && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
+  const poll = parsePoll(body.poll);
+  const text = file && !poll && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
   await rateLimit(env, "post", account.id, now);
   if (file) await rateLimit(env, "image", account.id, now);
   const tag = space.tagIds[body.type];
   const msg = await postAs(env, space, account, {
-    content: text,
+    content: discordContent(text, poll),
     thread_name: text ? threadName(text) : `📷 ${account.nick}`,
     ...(tag ? { applied_tags: [tag] } : {}),
   }, null, file ? [file] : null);
@@ -312,9 +436,11 @@ export async function createPost(env, account, body, now) {
   await env.DB.prepare(
     "INSERT INTO posts (id, space, author_id, type, text, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).bind(id, space.id, account.id, body.type, text, image, now, now).run();
+  if (poll) await env.DB.prepare("INSERT INTO polls (post_id, options) VALUES (?, ?)").bind(id, JSON.stringify(poll)).run();
   await H.indexPost(env, id, space.id, text, now);
   await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
-  return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
+  const [out] = await postsOut(env, account, [await loadPost(env, id)]);
+  return { post: out };
 }
 
 /**
@@ -393,6 +519,61 @@ export async function createComment(env, account, id, body, now) {
   }
   await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, space: post.space, skip: notified }, now);
   const row = await env.DB.prepare(`${COMMENT_SELECT} WHERE c.id = ?`).bind(msg.id).first();
+  return { comment: commentOut(row) };
+}
+
+/** PATCH /v2/posts/:id {text} — the author rewrites the text (the picture stays). */
+export async function editPost(env, account, id, body, now) {
+  const post = await loadPost(env, id);
+  const space = await spaceFor(env, account, post.space);
+  if (post.author_id !== account.id) throw new HttpError(403, "forbidden", "Можно менять только свои посты");
+  const text = post.image && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
+  if (text === post.text) return { post: postOut(await loadPost(env, id), -1) };
+  await rateLimit(env, "edit", account.id, now);
+  const hook = `/webhooks/${space.webhook_id}/${space.webhook_token}/messages/${post.id}?thread_id=${post.id}`;
+  try {
+    await dapi(env, "PATCH", hook, { auth: false, body: { content: discordContent(text, await pollOptions(env, post.id)), allowed_mentions: { parse: [] } } });
+  } catch (e) {
+    if (e.discordStatus !== 404) throw e;
+    await markPostDeleted(env, post.id, now);
+    throw new HttpError(404, "no_post", "Пост удалён или не найден");
+  }
+  const name = text ? threadName(text) : `📷 ${account.nick}`;
+  if (name !== (post.text ? threadName(post.text) : `📷 ${account.nick}`)) {
+    // the thread title follows the first line; Discord allows few renames, so this is best effort
+    await dapi(env, "PATCH", `/channels/${post.id}`, { body: { name }, allow404: true }).catch(() => {});
+  }
+  await env.DB.prepare("UPDATE posts SET text = ?, edited_at = ?, updated_at = ? WHERE id = ?").bind(text, now, now, post.id).run();
+  await H.indexPost(env, post.id, post.space, text, post.created_at);
+  const [out] = await postsOut(env, account, [await env.DB.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(post.id).first()]);
+  return { post: out };
+}
+
+/** PATCH /v2/comments/:id {text} — the author rewrites a comment. */
+export async function editComment(env, account, id, body, now) {
+  if (!/^\d{1,20}$/.test(String(id))) throw new HttpError(404, "no_comment", "Комментарий не найден");
+  const c = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND deleted = 0").bind(id).first();
+  if (!c) throw new HttpError(404, "no_comment", "Комментарий не найден");
+  const post = await loadPost(env, c.post_id);
+  const space = await spaceFor(env, account, post.space);
+  if (c.author_id !== account.id) throw new HttpError(403, "forbidden", "Можно менять только свои комментарии");
+  const text = c.image && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_COMMENT);
+  if (text !== c.text) {
+    await rateLimit(env, "edit", account.id, now);
+    const hook = `/webhooks/${space.webhook_id}/${space.webhook_token}/messages/${c.id}?thread_id=${post.id}`;
+    try {
+      await dapi(env, "PATCH", hook, { auth: false, body: { content: text, allowed_mentions: { parse: [] } } });
+    } catch (e) {
+      if (e.discordStatus !== 404) throw e;
+      await markCommentDeleted(env, c.id, post.id, now);
+      throw new HttpError(404, "no_comment", "Комментарий удалён");
+    }
+    await env.DB.batch([
+      env.DB.prepare("UPDATE comments SET text = ?, edited_at = ?, updated_at = ? WHERE id = ?").bind(text, now, now, c.id),
+      env.DB.prepare("UPDATE posts SET updated_at = ? WHERE id = ?").bind(now, post.id),
+    ]);
+  }
+  const row = await env.DB.prepare(`${COMMENT_SELECT} WHERE c.id = ?`).bind(c.id).first();
   return { comment: commentOut(row) };
 }
 

@@ -128,14 +128,18 @@ export async function route(request, env, now) {
     }
     const cm = /^\/v2\/comments\/(\d{1,20})$/.exec(p);
     if (cm && m === "DELETE") return json(await F.deleteComment(env, account, cm[1], now));
+    if (cm && m === "PATCH") return json(await F.editComment(env, account, cm[1], await readJson(request), now));
     const pm = /^\/v2\/posts\/(\d{1,20})(\/[a-z]+)?$/.exec(p);
     if (pm) {
       const [, id, sub] = pm;
       if (!sub && m === "GET") return json(await F.getPost(env, account, id, now));
       if (!sub && m === "DELETE") return json(await F.deletePost(env, account, id, now));
+      if (!sub && m === "PATCH") return json(await F.editPost(env, account, id, await readJson(request), now));
       if (sub === "/comments" && m === "GET") return json(await F.comments(env, account, id, q));
       if (sub === "/comments" && m === "POST") return json(await F.createComment(env, account, id, await readJson(request), now), 201);
       if (sub === "/react" && m === "POST") return json(await F.react(env, account, id, await readJson(request), now));
+      if (sub === "/vote" && m === "POST") return json(await F.vote(env, account, id, await readJson(request), now));
+      if (sub === "/pin" && m === "POST") return json(await F.pin(env, account, id, await readJson(request), now));
       if (sub === "/solve" && m === "POST") return json(await F.solve(env, account, id, await readJson(request), now));
     }
   }

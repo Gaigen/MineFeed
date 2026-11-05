@@ -345,3 +345,92 @@ test("hashtags: parsing, tag feed, popular and prefix search", async () => {
   assert.equal((await api("GET", "/v2/feed?tag=ферма", { key: b.key, now: T0 + 9000 })).data.posts.length, 1);
   assert.ok(env);
 });
+
+test("editing posts and comments", async () => {
+  const { api, user, env, calls } = setup();
+  const a = await user("alice");
+  const b = await user("bob");
+  const post = (await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "old title\nbody #old" } })).data.post;
+  const c = (await api("POST", `/v2/posts/${post.id}/comments`, { key: b.key, body: { text: "nice" }, now: T0 + 10 })).data.comment;
+  await api("POST", "/v2/reports", { key: b.key, body: { postId: post.id, reason: "abuse" }, now: T0 + 20 });
+  assert.equal((await api("PATCH", `/v2/posts/${post.id}`, { key: b.key, body: { text: "hack" } })).status, 403);
+  calls.length = 0;
+  const r = await api("PATCH", `/v2/posts/${post.id}`, { key: a.key, body: { text: "new title\nbody #new" }, now: T0 + 100 });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.post.text, "new title\nbody #new");
+  assert.equal(r.data.post.editedAt, T0 + 100);
+  const edit = calls.find((x) => x.method === "PATCH" && x.path.startsWith("/api/v10/webhooks/wh1/tok/messages/"));
+  assert.equal(edit.body.content, "new title\nbody #new");
+  assert.equal(edit.search, `?thread_id=${post.id}`);
+  assert.ok(calls.find((x) => x.method === "PATCH" && x.path === `/api/v10/channels/${post.id}` && x.body.name === "new title"));
+  assert.equal((await api("GET", "/v2/feed?tag=old", { key: b.key })).data.posts.length, 0);
+  assert.equal((await api("GET", "/v2/feed?tag=new", { key: b.key })).data.posts.length, 1);
+  // the moderator sees what was reported
+  await env.DB.prepare("UPDATE accounts SET moderator = 1 WHERE id = ?").bind(b.id).run();
+  const q = await api("GET", "/v2/mod/reports", { key: b.key });
+  assert.equal(q.data.reports[0].target.original, "old title\nbody #old");
+  // comments
+  assert.equal((await api("PATCH", `/v2/comments/${c.id}`, { key: a.key, body: { text: "x" } })).status, 403);
+  const rc = await api("PATCH", `/v2/comments/${c.id}`, { key: b.key, body: { text: "very nice" }, now: T0 + 200 });
+  assert.equal(rc.data.comment.text, "very nice");
+  assert.equal(rc.data.comment.editedAt, T0 + 200);
+  assert.equal((await api("PATCH", `/v2/comments/${c.id}`, { key: b.key, body: { text: "  " } })).status, 400);
+  const s = await api("GET", `/v2/sync?space=global&since=${T0 + 150}&post=${post.id}`, { key: a.key, now: T0 + 300 });
+  assert.equal(s.data.comments[0].text, "very nice");
+});
+
+test("polls, pins and top", async () => {
+  const { api, user, env, calls } = setup();
+  const a = await user("alice");
+  const b = await user("bob");
+  const bad = await api("POST", "/v2/posts", { key: a.key, body: { type: "help", text: "q", poll: { options: ["one"] } } });
+  assert.equal(bad.status, 400);
+  assert.equal((await api("POST", "/v2/posts", { key: a.key, body: { type: "help", text: "q", poll: { options: ["a", "A"] } } })).status, 400);
+  calls.length = 0;
+  const p = (await api("POST", "/v2/posts", { key: a.key, body: { type: "help", text: "Лучший биом?", poll: { options: ["Лес", " Пустыня ", "Горы"] } } })).data.post;
+  assert.deepEqual(p.poll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 0, 0], my: -1 });
+  const hook = calls.find((c) => c.path === "/api/v10/webhooks/wh1/tok");
+  assert.match(hook.body.content, /Лучший биом\?\n\n📊 1️⃣ Лес\n2️⃣ Пустыня\n3️⃣ Горы/);
+  let v = await api("POST", `/v2/posts/${p.id}/vote`, { key: b.key, body: { option: 1 }, now: T0 + 10 });
+  assert.deepEqual(v.data.poll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 1, 0], my: 1 });
+  await api("POST", `/v2/posts/${p.id}/vote`, { key: a.key, body: { option: 1 }, now: T0 + 11 });
+  v = await api("POST", `/v2/posts/${p.id}/vote`, { key: b.key, body: { option: 2 }, now: T0 + 12 });
+  assert.deepEqual(v.data.poll.votes, [0, 1, 1]);
+  v = await api("POST", `/v2/posts/${p.id}/vote`, { key: b.key, body: { option: -1 }, now: T0 + 13 });
+  assert.deepEqual(v.data.poll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 1, 0], my: -1 });
+  assert.equal((await api("POST", `/v2/posts/${p.id}/vote`, { key: b.key, body: { option: 3 } })).status, 400);
+  const feedPoll = (await api("GET", "/v2/feed", { key: a.key })).data.posts[0].poll;
+  assert.deepEqual(feedPoll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 1, 0], my: 1 });
+  // editing keeps the poll in the Discord copy
+  calls.length = 0;
+  await api("PATCH", `/v2/posts/${p.id}`, { key: a.key, body: { text: "Лучший биом для дома?" }, now: T0 + 20 });
+  assert.match(calls.find((c) => c.method === "PATCH" && c.path.includes("/messages/")).body.content, /^Лучший биом для дома\?\n\n📊 1️⃣ Лес/);
+
+  // pins: server moderators in the global feed, at most 3
+  const plain = (await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "plain" }, now: T0 + 30 })).data.post;
+  assert.equal((await api("POST", `/v2/posts/${plain.id}/pin`, { key: a.key, body: { pinned: true } })).status, 403);
+  await env.DB.prepare("UPDATE accounts SET moderator = 1 WHERE id = ?").bind(b.id).run();
+  const ids = [p.id, plain.id];
+  for (let i = 0; i < 3; i++) ids.push((await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "n" + i }, now: T0 + 40 + i })).data.post.id);
+  for (let i = 0; i < 4; i++) {
+    const r = await api("POST", `/v2/posts/${ids[i]}/pin`, { key: b.key, body: { pinned: true }, now: T0 + 100 + i });
+    assert.equal(r.data.post.pinned, true);
+  }
+  let f = (await api("GET", "/v2/feed", { key: a.key, now: T0 + 200 })).data;
+  assert.deepEqual(f.pinned.map((x) => x.id), [ids[3], ids[2], ids[1]]);
+  await api("POST", `/v2/posts/${ids[3]}/pin`, { key: b.key, body: { pinned: false }, now: T0 + 300 });
+  f = (await api("GET", "/v2/feed", { key: a.key, now: T0 + 400 })).data;
+  assert.deepEqual(f.pinned.map((x) => x.id), [ids[2], ids[1]]);
+  assert.equal((await api("GET", "/v2/feed?type=talk", { key: a.key })).data.pinned, undefined);
+
+  // top: reactions and comments of the last day
+  await api("POST", `/v2/posts/${ids[4]}/react`, { key: b.key, body: { slot: 0 }, now: T0 + 500 });
+  await api("POST", `/v2/posts/${plain.id}/comments`, { key: b.key, body: { text: "c" }, now: T0 + 501 });
+  let top = (await api("GET", "/v2/feed?sort=top", { key: a.key, now: T0 + 1000 })).data;
+  assert.deepEqual(top.posts.map((x) => x.id), [ids[4], plain.id]);
+  assert.equal(top.next, null);
+  top = (await api("GET", "/v2/feed?sort=top", { key: a.key, now: T0 + 2 * 86_400_000 })).data;
+  assert.equal(top.posts.length, 0);
+  top = (await api("GET", "/v2/feed?sort=top&days=7", { key: a.key, now: T0 + 2 * 86_400_000 })).data;
+  assert.equal(top.posts.length, 2);
+});

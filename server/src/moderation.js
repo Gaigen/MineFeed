@@ -81,9 +81,10 @@ export async function report(env, account, body, now) {
   if (dup) return { ok: true, duplicate: true };
   await rateLimit(env, "report", account.id, now);
   await env.DB.prepare(
-    `INSERT INTO reports (id, post_id, comment_id, space, target_id, reporter_id, reason, details, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(randomCode(12).toLowerCase(), post.id, comment ? comment.id : null, post.space, targetId || null, account.id, reason, details, now).run();
+    `INSERT INTO reports (id, post_id, comment_id, space, target_id, reporter_id, reason, details, created_at, snapshot)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(randomCode(12).toLowerCase(), post.id, comment ? comment.id : null, post.space, targetId || null, account.id, reason, details, now,
+    comment ? comment.text : post.text).run();
 
   // the staff channel only gets the public feed: community posts stay private
   if (post.space === "global" && env.REPORT_CHANNEL_ID) {
@@ -136,7 +137,7 @@ export async function listReports(env, account) {
     await freshen(env, [row], g.comment_id ? "comments" : "posts");
     const out = g.comment_id ? F.commentOut(row) : F.postOut(row);
     const { results: who } = await env.DB.prepare(
-      `SELECT a.tag, r.details FROM reports r JOIN accounts a ON a.id = r.reporter_id
+      `SELECT a.tag, r.details, r.snapshot FROM reports r JOIN accounts a ON a.id = r.reporter_id
        WHERE r.post_id = ? AND r.comment_id IS ? AND r.status = 'open' ORDER BY r.created_at DESC LIMIT 5`
     ).bind(g.post_id, g.comment_id).all();
     const target = row.author_id
@@ -151,7 +152,9 @@ export async function listReports(env, account) {
       reasons: [...new Set(String(g.reasons || "").split(","))].filter(Boolean),
       reporters: who.map((w) => w.tag),
       details: who.map((w) => w.details).filter(Boolean).slice(0, 3),
-      target: { text: out.text, image: out.image, author: out.author, createdAt: out.createdAt, type: out.type || null },
+      target: { text: out.text, image: out.image, author: out.author, createdAt: out.createdAt, type: out.type || null,
+        // edited after the report: what the reporters saw
+        original: (who.map((w) => w.snapshot).find((t) => t != null && t !== out.text)) ?? null },
       canBan: !!account.moderator && !!target && !target.moderator && !target.banned && row.author_id !== account.id,
       canKick: g.space !== "global" && !!row.author_id && row.author_id !== account.id,
     });
