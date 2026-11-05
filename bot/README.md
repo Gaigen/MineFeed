@@ -44,3 +44,13 @@ It checks with the Worker that the player's Discord is linked to MineFeed, opens
 The Worker posts the application to `APPLICATIONS_CHANNEL_ID` with Approve/Reject buttons.
 Only members with `MOD_ROLE_ID` or Administrator can press them; Reject asks for an optional reason.
 On approval the Worker creates the community, a pinned welcome post and DMs the player.
+
+## Release announcements and ping roles
+
+- `releases.js` polls GitHub releases, Modrinth and CurseForge (via cfwidget) every 10 minutes for the mods in `PROJECTS`
+  and posts one message per new version into `ANNOUNCE_CHANNEL_ID` (crossposted when it is a news channel),
+  pinging the mod's role from `PING_ROLES`. Builds of one version for several Minecraft versions/loaders are merged.
+  It keeps no state: the channel itself is the memory (embed footer `<Name> <version>`), and only versions published
+  after `RELEASES_SINCE` are announced. Pre-releases (alpha/beta/rc/dev) are skipped.
+  The text is the GitHub release body, or the commits of the release when the body is only "Full Changelog".
+- `pings.js` handles buttons with `customId` `ping:<key>` (message in #welcome): a click toggles that ping role.

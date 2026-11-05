@@ -1,11 +1,13 @@
 // MineFeed gateway relay. Keeps one Discord Gateway connection and forwards feed-forum events
 // (comments written in Discord, deletions, tag changes, moderator role) to the Worker in batches.
 // Players never talk to this process.
-import { Client, GatewayIntentBits, Partials } from "discord.js";
+import { Client, GatewayIntentBits, Partials, ChannelType } from "discord.js";
 import { readFileSync, existsSync } from "node:fs";
 import { Relay } from "./relay.js";
 import { makeFilter } from "./filter.js";
 import { COMMAND, makeApplications, workerClient } from "./apply.js";
+import { makeAnnouncer } from "./releases.js";
+import { makePings, parseRoles } from "./pings.js";
 
 loadEnvFile(new URL("./.env", import.meta.url).pathname);
 const need = ["DISCORD_BOT_TOKEN", "WORKER_URL", "BOT_SECRET", "GUILD_ID", "FEED_CATEGORY_IDS"];
@@ -27,7 +29,9 @@ const channels = (id) => {
 const filter = makeFilter({ guildId: GUILD_ID, categories: process.env.FEED_CATEGORY_IDS.split(",").map((s) => s.trim()), channels });
 
 const onInteraction = makeApplications({ call: workerClient({ url: WORKER_URL, secret: BOT_SECRET }), modRoleId: MOD_ROLE_ID });
-client.on("interactionCreate", (i) => { onInteraction(i); });
+const pingRoles = parseRoles(process.env.PING_ROLES);
+const onPing = makePings({ roles: pingRoles });
+client.on("interactionCreate", async (i) => { if (!(await onPing(i))) onInteraction(i); });
 
 let forwarded = 0;
 client.on("raw", (packet) => {
@@ -67,6 +71,37 @@ client.once("clientReady", async () => {
     }
   }
 });
+
+// new releases of our mods -> announcements channel (pings the mod's role from PING_ROLES)
+const ANNOUNCE_CHANNEL_ID = process.env.ANNOUNCE_CHANNEL_ID || "";
+if (ANNOUNCE_CHANNEL_ID) {
+  const since = Date.parse(process.env.RELEASES_SINCE || "") || Date.now();
+  const channel = {
+    async send(msg) {
+      const ch = await client.channels.fetch(ANNOUNCE_CHANNEL_ID);
+      const m = await ch.send(msg);
+      if (ch.type === ChannelType.GuildAnnouncement) await m.crosspost().catch((e) => console.warn("crosspost failed:", e.message));
+      return m;
+    },
+    async recentFooters() {
+      const ch = await client.channels.fetch(ANNOUNCE_CHANNEL_ID);
+      const msgs = await ch.messages.fetch({ limit: 50 });
+      return new Set([...msgs.values()].filter((m) => m.author.id === client.user.id).flatMap((m) => m.embeds.map((e) => e.footer?.text)).filter(Boolean));
+    },
+  };
+  const tick = makeAnnouncer({ fetchJson, channel, roles: pingRoles, since });
+  const run = () => { if (client.isReady()) tick().catch((e) => console.warn("releases:", e.message)); };
+  setTimeout(run, 60_000);
+  setInterval(run, 10 * 60_000);
+}
+
+async function fetchJson(url, headers = {}) {
+  const r = await fetch(url, {
+    headers: { "User-Agent": "minefeed-bot (+https://github.com/Gaigen/MineFeed)", Accept: "application/json", ...headers },
+    signal: AbortSignal.timeout(15_000),
+  });
+  return { status: r.status, etag: r.headers.get("etag"), data: r.status === 200 ? await r.json() : null };
+}
 
 client.on("error", (e) => console.error("discord error:", e.message));
 setInterval(() => {
