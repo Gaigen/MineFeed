@@ -101,7 +101,7 @@ export async function authenticate(request, env, now) {
     await rateLimit(env, "authFail", clientIp(request), now);
     throw new HttpError(401, "bad_auth", "Ключ аккаунта недействителен");
   }
-  if (row.banned) throw new HttpError(403, "banned", "Аккаунт заблокирован");
+  await checkBan(env, row, now);
   if (now - row.last_used_at > TOUCH_EVERY) {
     await env.DB.prepare("UPDATE sessions SET last_used_at = ? WHERE key_hash = ?").bind(now, hash).run();
   }
@@ -224,7 +224,7 @@ export async function recover(request, env, body, now) {
   if (code.length !== 20) throw new HttpError(400, "bad_code", "Неверный код восстановления");
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE recovery_hash = ?").bind(await sha256Hex(code)).first();
   if (!acc) throw new HttpError(404, "bad_code", "Неверный код восстановления");
-  if (acc.banned) throw new HttpError(403, "banned", "Аккаунт заблокирован");
+  await checkBan(env, acc, now);
   const recovery = recoveryCode();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sessions WHERE account_id = ?").bind(acc.id),
@@ -252,4 +252,15 @@ export async function publicProfile(env, rawTag, now) {
   if (!acc) throw new HttpError(404, "not_found", "Пользователь не найден");
   const { id, tag: t, nick, createdAt, tagProtected } = publicAccount(acc, now);
   return { user: { id, tag: t, nick, createdAt, tagProtected } };
+}
+
+/** Ban check at sign-in: lifts an expired ban, otherwise explains it (until/reason for the mod). */
+export async function checkBan(env, row, now) {
+  if (!row.banned) return;
+  if (row.ban_until && row.ban_until <= now) {
+    await env.DB.prepare("UPDATE accounts SET banned = 0, ban_until = NULL, ban_reason = NULL WHERE id = ?").bind(row.id).run();
+    row.banned = 0;
+    return;
+  }
+  throw new HttpError(403, "banned", "Аккаунт заблокирован", { until: row.ban_until || null, reason: row.ban_reason || null });
 }

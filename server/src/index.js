@@ -5,6 +5,7 @@ import * as A from "./accounts.js";
 import * as D from "./discord.js";
 import * as F from "./feed.js";
 import * as U from "./users.js";
+import * as M from "./moderation.js";
 import * as N from "./notify.js";
 import * as B from "./bot.js";
 import * as C from "./communities.js";
@@ -24,6 +25,7 @@ export default {
   },
   async scheduled(_event, env) {
     await N.prune(env, Date.now());
+    await M.expireBans(env, Date.now());
   },
 };
 
@@ -55,7 +57,14 @@ export async function route(request, env, now) {
   if (p === "/v2/auth/recover" && m === "POST") return json(await A.recover(request, env, await readJson(request), now));
 
   const userMatch = /^\/v2\/users\/@?([^/]+)$/.exec(p);
-  if (userMatch && m === "GET") return json(await U.profile(env, decodeURIComponent(userMatch[1])));
+  if (userMatch && m === "GET") {
+    // signed-in server moderators also see banned players (to lift the ban)
+    let viewer = null;
+    if (request.headers.get("authorization")) {
+      try { viewer = await A.authenticate(request, env, now); } catch { viewer = null; }
+    }
+    return json(await U.profile(env, decodeURIComponent(userMatch[1]), viewer));
+  }
 
   if (p === "/v2/bot/events" && m === "POST") {
     await B.checkBot(request, env);
@@ -72,14 +81,19 @@ export async function route(request, env, now) {
   // everything below needs an account
   if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
       || p.startsWith("/v2/notifications") || p === "/v2/reports" || p.startsWith("/v2/communities") || p === "/v2/join"
-      || p === "/v2/users") {
+      || p === "/v2/users" || p.startsWith("/v2/mod/") || /^\/v2\/users\/[^/]+\/ban$/.test(p)) {
     const account = await A.authenticate(request, env, now);
     const q = url.searchParams;
     if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
     if (p === "/v2/users" && m === "GET") return json(await U.search(env, q));
     if (p === "/v2/sync" && m === "GET") return json(await F.sync(env, account, q, now));
     if (p === "/v2/posts" && m === "POST") return json(await F.createPost(env, account, await readJson(request, 2_100_000), now), 201);
-    if (p === "/v2/reports" && m === "POST") return json(await F.report(env, account, await readJson(request), now));
+    if (p === "/v2/reports" && m === "POST") return json(await M.report(env, account, await readJson(request), now));
+    if (p === "/v2/mod/reports" && m === "GET") return json(await M.listReports(env, account));
+    if (p === "/v2/mod/resolve" && m === "POST") return json(await M.resolve(env, account, await readJson(request), now));
+    const bm = /^\/v2\/users\/([^/]+)\/ban$/.exec(p);
+    if (bm && m === "POST") return json(await M.ban(env, account, decodeURIComponent(bm[1]), await readJson(request), now));
+    if (bm && m === "DELETE") return json(await M.unban(env, account, decodeURIComponent(bm[1]), now));
     if (p === "/v2/notifications" && m === "GET") return json(await N.list(env, account, q));
     if (p === "/v2/notifications/seen" && m === "POST") return json(await N.seen(env, account, await readJson(request), now));
     if (p === "/v2/join" && m === "POST") return json(await C.join(request, env, account, await readJson(request), now));
@@ -87,7 +101,10 @@ export async function route(request, env, now) {
       const body = await readJson(request, 8192);
       return json(await AP.submit(env, account, body, body.lang || request.headers.get("accept-language"), now), 201);
     }
-    if (p === "/v2/communities" && m === "GET") return json(await C.mine(env, account));
+    if (p === "/v2/communities" && m === "GET") {
+      const out = await C.mine(env, account);
+      return json({ ...out, moderator: !!account.moderator, reportsOpen: await M.openCount(env, account) });
+    }
     if (p === "/v2/communities" && m === "POST") return json(await C.create(env, account, await readJson(request), now), 201);
     const cc = /^\/v2\/communities\/([a-z0-9]{6,16})(?:\/(codes|requests|members|leave)(?:\/([^/]{1,64}))?)?$/.exec(p);
     if (cc) {

@@ -313,3 +313,85 @@ test("Discord link later gives roles; bot MEMBER_JOIN too", async () => {
   assert.deepEqual(res.results, ["roles:1"]);
   assert.equal(roles["d-zed"].size, 1);
 });
+
+test("moderation: reports queue, resolve, bans", async () => {
+  const { api, user, community, env } = setup();
+  const DAYMS = 86_400_000;
+  const a = await user("alice", "d-alice");   // community owner
+  const b = await user("bob", "d-bob");
+  const c = await user("carol");
+  const m = await user("staffer");
+  await env.DB.prepare("UPDATE accounts SET moderator = 1 WHERE id = ?").bind(m.id).run();
+  const cid = await community(a, "Kuznya");
+  const code = (await api("POST", `/v2/communities/${cid}/codes`, { key: a.key, body: {} })).data.code.code;
+  await api("POST", "/v2/join", { key: b.key, body: { code } });
+  await api("POST", "/v2/join", { key: c.key, body: { code } });
+
+  const gpost = (await api("POST", "/v2/posts", { key: b.key, body: { type: "talk", text: "buy gold" } })).data.post;
+  const cpost = (await api("POST", "/v2/posts", { key: b.key, body: { space: cid, type: "talk", text: "rude" } })).data.post;
+  const com = (await api("POST", `/v2/posts/${cpost.id}/comments`, { key: c.key, body: { text: "meh" } })).data.comment;
+
+  // reporting: no self-reports, duplicates are ignored
+  assert.equal((await api("POST", "/v2/reports", { key: b.key, body: { postId: gpost.id, reason: "spam" } })).data.code, "own_content");
+  assert.equal((await api("POST", "/v2/reports", { key: c.key, body: { postId: gpost.id, reason: "spam" } })).status, 200);
+  assert.equal((await api("POST", "/v2/reports", { key: c.key, body: { postId: gpost.id, reason: "spam" } })).data.duplicate, true);
+  await api("POST", "/v2/reports", { key: a.key, body: { postId: gpost.id, reason: "scam", details: "  fake  shop " } });
+  await api("POST", "/v2/reports", { key: c.key, body: { postId: cpost.id, reason: "abuse" } });
+  await api("POST", "/v2/reports", { key: b.key, body: { postId: cpost.id, commentId: com.id, reason: "other", details: "x" } });
+
+  // who sees what
+  assert.equal((await api("GET", "/v2/mod/reports", { key: c.key })).data.code, "not_mod");
+  const own = (await api("GET", "/v2/mod/reports", { key: a.key })).data.reports;
+  assert.equal(own.length, 2); // community owner: only the community
+  assert.ok(own.every((r) => r.space === cid && r.spaceName === "Kuznya" && r.canKick && !r.canBan));
+  const all = (await api("GET", "/v2/mod/reports", { key: m.key })).data.reports;
+  assert.equal(all.length, 3);
+  const g = all.find((r) => r.postId === gpost.id);
+  assert.equal(g.count, 2);
+  assert.deepEqual(g.reasons.sort(), ["scam", "spam"]);
+  assert.deepEqual(g.details, ["fake shop"]);
+  assert.equal(g.target.author.tag, "bob");
+  assert.equal(g.canBan, true);
+  assert.equal((await api("GET", "/v2/communities", { key: a.key })).data.reportsOpen, 2);
+  assert.equal((await api("GET", "/v2/communities", { key: m.key })).data.reportsOpen, 3);
+
+  // resolve: community mods can't touch the global feed; dismiss / delete
+  assert.equal((await api("POST", "/v2/mod/resolve", { key: a.key, body: { postId: gpost.id, action: "dismiss" } })).status, 403);
+  assert.equal((await api("POST", "/v2/mod/resolve", { key: a.key, body: { postId: cpost.id, commentId: com.id, action: "dismiss" } })).status, 200);
+  assert.equal((await api("POST", "/v2/mod/resolve", { key: a.key, body: { postId: cpost.id, action: "delete" } })).status, 200);
+  assert.equal((await api("GET", `/v2/posts/${cpost.id}`, { key: a.key })).status, 404);
+  assert.equal((await api("GET", "/v2/mod/reports", { key: a.key })).data.reports.length, 0);
+  const log = (await env.DB.prepare("SELECT action FROM mod_log ORDER BY id").all()).results.map((r) => r.action);
+  assert.deepEqual(log, ["dismiss", "delete_post"]);
+
+  // bans: only server moderators, not other moderators; temporary bans end by themselves
+  assert.equal((await api("POST", `/v2/users/${b.id}/ban`, { key: a.key, body: { days: 1 } })).status, 403);
+  assert.equal((await api("POST", `/v2/users/${m.id}/ban`, { key: m.key, body: { days: 1 } })).data.code, "self");
+  assert.equal((await api("POST", `/v2/users/${b.id}/ban`, { key: m.key, body: { days: 3 } })).data.code, "bad_days");
+  const ban = await api("POST", `/v2/users/${b.id}/ban`, { key: m.key, body: { days: 7, reason: "spam shop", postId: gpost.id, deleteContent: true } });
+  assert.equal(ban.data.until, T0 + 7 * DAYMS);
+  const denied = await api("GET", "/v2/feed", { key: b.key });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.data.code, "banned");
+  assert.equal(denied.data.until, T0 + 7 * DAYMS);
+  assert.equal(denied.data.reason, "spam shop");
+  assert.equal((await api("GET", `/v2/posts/${gpost.id}`, { key: c.key })).status, 404); // deleted with the ban
+  assert.equal((await api("GET", "/v2/mod/reports", { key: m.key })).data.reports.length, 0);
+  assert.equal((await api("GET", `/v2/users/${b.id}`)).status, 404);
+  const seen = await api("GET", `/v2/users/${b.id}`, { key: m.key });
+  assert.equal(seen.data.user.banned, true);
+  assert.equal(seen.data.user.banReason, "spam shop");
+  assert.equal((await api("GET", "/v2/feed", { key: b.key, now: T0 + 8 * DAYMS })).status, 200); // expired
+  await api("POST", `/v2/users/${b.id}/ban`, { key: m.key, body: { days: 0 } });
+  assert.equal((await api("GET", "/v2/feed", { key: b.key, now: T0 + 400 * DAYMS })).status, 403);
+  assert.equal((await api("DELETE", `/v2/users/${b.id}/ban`, { key: m.key })).status, 200);
+  assert.equal((await api("GET", "/v2/feed", { key: b.key })).status, 200);
+  assert.equal((await api("DELETE", `/v2/users/${b.id}/ban`, { key: m.key })).data.code, "not_banned");
+
+  // kicking from a community through a report
+  const p2 = (await api("POST", "/v2/posts", { key: c.key, body: { space: cid, type: "talk", text: "again" } })).data.post;
+  await api("POST", "/v2/reports", { key: b.key, body: { postId: p2.id, reason: "abuse" } });
+  assert.equal((await api("POST", "/v2/mod/resolve", { key: a.key, body: { postId: p2.id, action: "kick" } })).status, 200);
+  assert.equal((await api("GET", `/v2/communities/${cid}`, { key: c.key })).status, 404);
+  assert.equal((await api("POST", "/v2/join", { key: c.key, body: { code } })).data.code, "banned_here");
+});

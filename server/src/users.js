@@ -23,13 +23,14 @@ export async function search(env, q) {
 }
 
 /** GET /v2/users/:idOrTag — public profile with stats from the global feed. */
-export async function profile(env, key) {
+export async function profile(env, key, viewer = null) {
   const k = String(key || "").toLowerCase().replace(/^@/, "");
   if (!UUID.test(k) && !TAG.test(k)) throw new HttpError(404, "no_user", "Игрок не найден");
   const a = await env.DB.prepare(
-    `SELECT id, tag, nick, created_at, discord_id, discord_avatar, skin, avatar, moderator, banned, tag_protected FROM accounts WHERE ${UUID.test(k) ? "id" : "tag"} = ?`
+    `SELECT id, tag, nick, created_at, discord_id, discord_avatar, skin, avatar, moderator, banned, ban_until, ban_reason, tag_protected FROM accounts WHERE ${UUID.test(k) ? "id" : "tag"} = ?`
   ).bind(k).first();
-  if (!a || a.banned) throw new HttpError(404, "no_user", "Игрок не найден");
+  const staff = !!(viewer && viewer.moderator);
+  if (!a || (a.banned && !staff)) throw new HttpError(404, "no_user", "Игрок не найден");
   const s = await env.DB.prepare(
     `SELECT COUNT(*) AS posts, COALESCE(SUM(re0 + re1), 0) AS reactions, COALESCE(SUM(type = 'gg'), 0) AS gg,
        COALESCE(SUM(type = 'help' AND solved = 1), 0) AS solved
@@ -44,6 +45,7 @@ export async function profile(env, key) {
       id: a.id, tag: a.tag, nick: a.nick, createdAt: a.created_at, avatar: A.keyOf(a),
       discord: !!a.discord_id, moderator: !!a.moderator, tagProtected: !!a.tag_protected,
       stats: { posts: s.posts, comments: c.n, reactions: s.reactions, gg: s.gg, solved: s.solved },
+      ...(staff ? { banned: !!a.banned, banUntil: a.ban_until || null, banReason: a.ban_reason || null } : {}),
     },
   };
 }

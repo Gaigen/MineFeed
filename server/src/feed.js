@@ -5,6 +5,7 @@ import { rateLimit } from "./accounts.js";
 import { dapi, webhookName } from "./dapi.js";
 import * as N from "./notify.js";
 import { parseUpload, freshen } from "./images.js";
+import { closeReports, modLog } from "./modlog.js";
 
 export const TYPES = ["rip", "help", "gg", "talk"];
 export const MAX_POST = 500;
@@ -15,8 +16,8 @@ const PAGE = 20;
 const COMMENTS_PAGE = 50;
 
 const AUTHOR_COLS = "a.tag AS a_tag, a.nick AS a_nick, a.skin AS a_skin, a.avatar AS a_av, a.discord_id AS a_did, a.discord_avatar AS a_dav";
-const POST_SELECT = `SELECT p.*, ${AUTHOR_COLS} FROM posts p LEFT JOIN accounts a ON a.id = p.author_id`;
-const COMMENT_SELECT = `SELECT c.*, ${AUTHOR_COLS} FROM comments c LEFT JOIN accounts a ON a.id = c.author_id`;
+export const POST_SELECT = `SELECT p.*, ${AUTHOR_COLS} FROM posts p LEFT JOIN accounts a ON a.id = p.author_id`;
+export const COMMENT_SELECT = `SELECT c.*, ${AUTHOR_COLS} FROM comments c LEFT JOIN accounts a ON a.id = c.author_id`;
 
 // ---------- text ----------
 
@@ -76,7 +77,7 @@ export async function getSpace(env, id) {
 }
 
 /** Who may read/write a space: everyone for the global feed, members for a community. */
-async function spaceFor(env, account, id) {
+export async function spaceFor(env, account, id) {
   const sid = String(id || "global");
   if (sid === "global") return { ...(await getSpace(env, sid)), role: null };
   const m = await env.DB.prepare(
@@ -171,7 +172,7 @@ function intParam(raw, def, min, max) {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
 }
 
-async function loadPost(env, id) {
+export async function loadPost(env, id) {
   if (!/^\d{1,20}$/.test(String(id))) throw new HttpError(404, "no_post", "Пост не найден");
   const row = await env.DB.prepare(`${POST_SELECT} WHERE p.id = ?`).bind(id).first();
   if (!row || row.deleted) throw new HttpError(404, "no_post", "Пост удалён или не найден");
@@ -184,7 +185,7 @@ function canModerate(account, authorId, space) {
 }
 
 /** Space check that lets server moderators act on posts they can't otherwise open. */
-async function spaceForModeration(env, account, id) {
+export async function spaceForModeration(env, account, id) {
   try {
     return await spaceFor(env, account, id);
   } catch (e) {
@@ -393,6 +394,7 @@ export async function createComment(env, account, id, body, now) {
 
 export async function markPostDeleted(env, id, now) {
   await env.DB.prepare("UPDATE posts SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0").bind(now, id).run();
+  await closeReports(env, { postId: id, wholePost: true }, "done", "gone", null, now);
 }
 
 /** DELETE /v2/posts/:id — author or moderator. */
@@ -401,6 +403,10 @@ export async function deletePost(env, account, id, now) {
   const space = await spaceForModeration(env, account, post.space);
   if (!canModerate(account, post.author_id, space)) throw new HttpError(403, "forbidden", "Можно удалять только свои посты");
   await dapi(env, "DELETE", `/channels/${post.id}`, { allow404: true });
+  if (account.id !== post.author_id) {
+    await closeReports(env, { postId: post.id, wholePost: true }, "done", "deleted", account.id, now);
+    await modLog(env, account.id, "delete_post", { target: post.author_id, postId: post.id, space: post.space }, now);
+  }
   await markPostDeleted(env, post.id, now);
   return { ok: true };
 }
@@ -416,6 +422,10 @@ export async function deleteComment(env, account, id, now) {
     throw new HttpError(403, "forbidden", "Можно удалять только свои комментарии");
   }
   await dapi(env, "DELETE", `/channels/${c.post_id}/messages/${c.id}`, { allow404: true });
+  if (account.id !== c.author_id) {
+    await closeReports(env, { postId: c.post_id, commentId: c.id }, "done", "deleted", account.id, now);
+    await modLog(env, account.id, "delete_comment", { target: c.author_id, postId: c.post_id, commentId: c.id, space: post ? post.space : null }, now);
+  }
   await markCommentDeleted(env, c.id, c.post_id, now);
   return { ok: true };
 }
@@ -425,6 +435,7 @@ export async function markCommentDeleted(env, id, postId, now) {
   if (r.meta.changes) {
     await env.DB.prepare("UPDATE posts SET comments = MAX(comments - 1, 0), updated_at = ? WHERE id = ?").bind(now, postId).run();
   }
+  await closeReports(env, { postId, commentId: id }, "done", "gone", null, now);
 }
 
 /** POST /v2/posts/:id/react {slot: 0|1} — toggles; picking the other slot switches. */
@@ -477,25 +488,3 @@ export async function solve(env, account, id, body, now) {
   return { post: postOut(await loadPost(env, post.id), (await myReactions(env, account, [post.id]))[post.id]) };
 }
 
-/** POST /v2/reports {postId, commentId?, reason} — goes to the moderators' channel. */
-export async function report(env, account, body, now) {
-  if (!env.REPORT_CHANNEL_ID) throw new HttpError(503, "reports_off", "Жалобы сейчас недоступны");
-  const post = await loadPost(env, body.postId);
-  let comment = null;
-  if (body.commentId) {
-    comment = await env.DB.prepare("SELECT * FROM comments WHERE id = ? AND post_id = ? AND deleted = 0").bind(String(body.commentId), post.id).first();
-    if (!comment) throw new HttpError(404, "no_comment", "Комментарий не найден");
-  }
-  await spaceFor(env, account, post.space);
-  const reason = cleanText(body.reason || "—", 300);
-  await rateLimit(env, "report", account.id, now);
-  const link = `https://discord.com/channels/${env.DISCORD_GUILD_ID}/${post.id}` + (comment ? `/${comment.id}` : "");
-  const quoted = (comment ? comment.text : post.text).slice(0, 300).replace(/\n/g, "\n> ");
-  await dapi(env, "POST", `/channels/${env.REPORT_CHANNEL_ID}/messages`, {
-    body: {
-      content: `🚩 **Report** from @${account.tag} (${account.id})\n**Reason:** ${reason}\n**${comment ? "Comment" : "Post"}:** ${link}\n> ${quoted}`,
-      allowed_mentions: { parse: [] },
-    },
-  });
-  return { ok: true };
-}
