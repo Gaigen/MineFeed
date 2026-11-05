@@ -495,7 +495,7 @@ public class PostScreen extends ShellScreen {
             if (com.feed.client.HiddenPlayers.isHidden(c.authorId) && !c.authorId.equals(post.uuid)) {
                 continue;
             }
-            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", commentTextW());
+            List<String> lines = PostCard.wrap(this.font, c.text, commentTextW());
             int iw = 0;
             int ih = 0;
             int h = 10 + lines.size() * COMMENT_LINE;
@@ -634,10 +634,13 @@ public class PostScreen extends ShellScreen {
         g.drawString(this.font, FeedUtil.clip(this.font, meta, Math.max(10, x + contentWidth() - nx)), nx, y, RetroUi.GRAY, false);
         int ly = y + 10;
         for (String line : row.lines()) {
-            PostCard.drawRich(g, this.font, line, x + 25, ly, RetroUi.FG, mouseX, mouseY);
+            PostCard.drawRich(g, this.font, line, x + 25, ly, RetroUi.FG, mouseX, mouseY, Spoilers.isOpen(c.id));
             ly += COMMENT_LINE;
         }
-        if (c.imageUrl != null) {
+        if (c.imageUrl != null && c.imageSpoiler && !Spoilers.isOpen(Spoilers.image(c.id))) {
+            boolean hv = mouseX >= x + 25 && mouseX < x + 25 + row.imgW() && mouseY >= ly + 2 && mouseY < ly + 2 + row.imgH();
+            Spoilers.drawCover(g, this.font, x + 25, ly + 2, row.imgW(), row.imgH(), hv);
+        } else if (c.imageUrl != null) {
             ImageBox.draw(g, this.font, c.imageUrl, x + 25, ly + 2, row.imgW(), row.imgH());
         }
         if (mouseX >= x && mouseX < x + contentWidth() && mouseY >= y - 3 && mouseY < y + row.height() + 3) {
@@ -705,6 +708,7 @@ public class PostScreen extends ShellScreen {
                 case POLL -> com.feed.client.PostActions.vote(post, Integer.parseInt(hit.value()), this::relayout);
                 case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
                 case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+                case SPOILER -> PostCard.reveal(post.id, hit);
                 default -> {
                 }
             }
@@ -738,9 +742,12 @@ public class PostScreen extends ShellScreen {
             }
             int ly = cy + 10;
             if (mouseY >= ly && mouseY < ly + row.lines().size() * COMMENT_LINE) {
-                String link = PostCard.linkAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX);
+                String link = PostCard.linkAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX,
+                        Spoilers.isOpen(c.id));
                 if (link != null) {
-                    if (link.startsWith("~")) {
+                    if (link.equals("!")) {
+                        Spoilers.open(c.id);
+                    } else if (link.startsWith("~")) {
                         com.feed.client.PostActions.copyCoords(link.substring(1));
                     } else if (link.startsWith("#")) {
                         openHashtag(post.space, link.substring(1));
@@ -753,6 +760,10 @@ public class PostScreen extends ShellScreen {
             if (c.imageUrl != null) {
                 int iy = ly + row.lines().size() * COMMENT_LINE + 2;
                 if (mouseY >= iy && mouseY < iy + row.imgH() && mouseX >= x + 25 && mouseX < x + 25 + row.imgW()) {
+                    if (c.imageSpoiler && !Spoilers.isOpen(Spoilers.image(c.id))) {
+                        Spoilers.open(Spoilers.image(c.id));
+                        return true;
+                    }
                     this.minecraft.setScreen(new ImageViewScreen(this, c.imageUrl, c.imageW, c.imageH));
                     return true;
                 }

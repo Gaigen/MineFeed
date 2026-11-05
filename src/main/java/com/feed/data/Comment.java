@@ -13,4 +13,6 @@ public class Comment {
     public int imageW;
     public int imageH;
     public boolean edited;
+    /** The picture stays covered until clicked. */
+    public boolean imageSpoiler;
 }

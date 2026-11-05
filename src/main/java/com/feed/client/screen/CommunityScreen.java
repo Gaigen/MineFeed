@@ -477,7 +477,8 @@ public class CommunityScreen extends ShellScreen {
             y += ABOUT_H + 12;
             label(g, "feed.manage.settings.links", x, y);
             y += ROW;
-            y = discordRow(g, x, y, w, mouseX, mouseY) + 4;
+            y = discordRow(g, x, y, w, mouseX, mouseY);
+            y = nsfwRow(g, x, y, w, mouseX, mouseY) + 4;
             boolean changed = draft != null && (!draft[0].trim().equals(community.name()) || !draft[1].trim().equals(nz(community.description()))
                     || !draft[2].trim().equals(nz(community.about())) || !draft[3].trim().equals(nz(community.links())));
             String save = tr("feed.manage.settings.save");
@@ -506,7 +507,11 @@ public class CommunityScreen extends ShellScreen {
         String role = tr("feed.manage.role_line." + (community.role() == null ? "member" : community.role()));
         g.drawString(this.font, role, vx, y + 4, community.isMod() ? RetroUi.CYAN : RetroUi.FG, false);
         y += ROW;
-        y = discordRow(g, x, y, w, mouseX, mouseY) + 4;
+        y = discordRow(g, x, y, w, mouseX, mouseY);
+        if (community.nsfw()) {
+            y = nsfwRow(g, x, y, w, mouseX, mouseY);
+        }
+        y += 4;
         String leave = tr("feed.manage.settings.leave");
         button(g, leave, x, y, RetroUi.ERROR, mouseX, mouseY, () -> confirm("feed.manage.settings.leave",
                 Component.translatable("feed.manage.settings.leave_confirm", community.name()), true,
@@ -528,6 +533,45 @@ public class CommunityScreen extends ShellScreen {
         button(g, open, x + w - RetroUi.buttonWidth(this.font, open), y + 1, RetroUi.FG, mouseX, mouseY,
                 () -> ConfirmLinkScreen.confirmLinkNow(this, url));
         return y + ROW;
+    }
+
+    /** 18+: the owner can turn it on (with a warning); only a server moderator can turn it off. */
+    private int nsfwRow(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
+        label(g, "feed.nsfw.label", x, y);
+        String value = tr(community.nsfw() ? "feed.nsfw.community_on" : "feed.nsfw.community_off");
+        int bw = 0;
+        if (community.isOwner() && !community.nsfw()) {
+            String on = tr("feed.nsfw.turn_on");
+            bw = RetroUi.buttonWidth(this.font, on) + 6;
+            button(g, on, x + w - RetroUi.buttonWidth(this.font, on), y + 1, RetroUi.ERROR, mouseX, mouseY, this::confirmNsfw);
+        }
+        g.drawString(this.font, FeedUtil.clip(this.font, value, w - LABEL_W - bw), x + LABEL_W, y + 4,
+                community.nsfw() ? RetroUi.ERROR : RetroUi.FG, false);
+        return y + ROW;
+    }
+
+    private void confirmNsfw() {
+        var acc = com.feed.client.account.AccountManager.INSTANCE.account();
+        boolean needAge = acc == null || !acc.showNsfw();
+        confirm("feed.nsfw.community_title", Component.translatable(needAge ? "feed.nsfw.community_confirm_age" : "feed.nsfw.community_confirm"),
+                true, () -> {
+                    busy = true;
+                    status = null;
+                    CompletableFuture<?> age = needAge
+                            ? com.feed.client.account.AccountManager.INSTANCE.api().setShowNsfw(true).thenAccept(a ->
+                            this.minecraft.execute(() -> com.feed.client.account.AccountManager.INSTANCE.updateAccount(a)))
+                            : CompletableFuture.completedFuture(null);
+                    age.thenCompose(v -> CommunityApi.setNsfw(community.id(), true)).whenComplete((c, ex) -> this.minecraft.execute(() -> {
+                        busy = false;
+                        if (ex != null) {
+                            setStatus(CommunityApi.describe(ex), RetroUi.ERROR);
+                            return;
+                        }
+                        community = c;
+                        setStatus(Component.translatable("feed.nsfw.community_saved"), AccountUi.GREEN);
+                        home().loadCommunities();
+                    }));
+                });
     }
 
     private void save() {

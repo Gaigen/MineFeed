@@ -1,5 +1,5 @@
 // In-mod notifications. Reactions fold into one row per post so they never spam.
-import { HttpError } from "./util.js";
+import { HttpError, hideSpoilers } from "./util.js";
 import { keyOf } from "./avatars.js";
 
 const QUOTE = 80;
@@ -7,7 +7,7 @@ const PAGE = 30;
 export const KEEP_MS = 60 * 86_400_000;
 
 function quote(text) {
-  const chars = [...String(text || "").replace(/\s+/g, " ").trim()];
+  const chars = [...hideSpoilers(text).replace(/\s+/g, " ").trim()];
   return chars.length > QUOTE ? chars.slice(0, QUOTE - 1).join("") + "…" : chars.join("");
 }
 

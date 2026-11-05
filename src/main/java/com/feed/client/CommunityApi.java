@@ -19,7 +19,8 @@ import java.util.concurrent.CompletionException;
 public final class CommunityApi {
 
     public record Community(String id, String name, String description, int members, String ownerId,
-                            String role, int unread, int requests, String about, String links, String discordUrl) {
+                            String role, int unread, int requests, String about, String links, String discordUrl,
+                            boolean nsfw) {
         public boolean isMod() {
             return "owner".equals(role) || "mod".equals(role);
         }
@@ -156,6 +157,13 @@ public final class CommunityApi {
         return call("DELETE", "/v2/communities/" + id, null).thenApply(o -> null);
     }
 
+    /** 18+ community: its Discord channel becomes age-restricted; only a server moderator can turn it off. */
+    public static CompletableFuture<Community> setNsfw(String id, boolean on) {
+        JsonObject b = new JsonObject();
+        b.addProperty("nsfw", on);
+        return call("PATCH", "/v2/communities/" + id, b).thenApply(o -> community(o.getAsJsonObject("community")));
+    }
+
     public static CompletableFuture<Void> leave(String id) {
         return call("POST", "/v2/communities/" + id + "/leave", new JsonObject()).thenApply(o -> null);
     }
@@ -288,6 +296,8 @@ public final class CommunityApi {
             case "full" -> "feed.community.error.full";
             case "code_expired", "code_used_up" -> "feed.community.error.code_dead";
             case "banned_here" -> "feed.community.error.banned_here";
+            case "need_18" -> "feed.nsfw.need";
+            case "nsfw_locked" -> "feed.nsfw.locked";
             case "rate_limited" -> "feed.account.error.rate_limited";
             case "network" -> "feed.screen.error.network";
             default -> null;
@@ -305,7 +315,8 @@ public final class CommunityApi {
 
     private static Community community(JsonObject o) {
         return new Community(str(o, "id"), str(o, "name"), str(o, "description"), num(o, "members"), str(o, "ownerId"),
-                str(o, "role"), num(o, "unread"), num(o, "requests"), str(o, "about"), str(o, "links"), str(o, "discordUrl"));
+                str(o, "role"), num(o, "unread"), num(o, "requests"), str(o, "about"), str(o, "links"), str(o, "discordUrl"),
+                bool(o, "nsfw"));
     }
 
     private static Code code(JsonObject o) {

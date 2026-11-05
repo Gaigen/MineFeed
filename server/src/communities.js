@@ -245,6 +245,7 @@ export async function update(env, account, id, body) {
     // the forum may already hold 18+ posts: only a server moderator who checked it may take the mark off
     throw new HttpError(403, "nsfw_locked", "Снять метку 18+ может только модератор сервера");
   }
+  if (nsfw && !c.nsfw && !account.show_nsfw) throw new HttpError(403, "need_18", "Сначала включи «Показывать 18+» в настройках профиля");
   if (nsfw !== !!c.nsfw) {
     // Discord: age-restricted channel (it asks for the age itself before showing it)
     await dapi(env, "PATCH", `/channels/${c.forum_id}`, { body: { nsfw }, allow404: true });

@@ -77,3 +77,8 @@ export async function sha256Hex(text) {
 export function clientIp(request) {
   return request.headers.get("cf-connecting-ip") || "local";
 }
+
+/** "||secret||" (Discord spoiler) -> "▒▒▒" where the text can't be hidden: thread titles, notification quotes. */
+export function hideSpoilers(text) {
+  return String(text || "").replace(/\|\|[\s\S]+?\|\|/g, "▒▒▒");
+}

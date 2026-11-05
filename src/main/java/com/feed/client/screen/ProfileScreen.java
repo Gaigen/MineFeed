@@ -47,6 +47,8 @@ public class ProfileScreen extends ShellScreen {
     private int discordY;
     private int hiddenY;
     private RetroButton hiddenButton;
+    private int nsfwY;
+    private RetroButton nsfwButton;
     private int accountY;
     private int statusY;
 
@@ -155,6 +157,10 @@ public class ProfileScreen extends ShellScreen {
         hiddenButton = button(bx, y, bw, "feed.hide.list", b -> this.minecraft.setScreen(new HiddenPlayersScreen(home()).from(this)));
         y += 26;
 
+        nsfwY = y;
+        nsfwButton = button(bx, y, bw, a.showNsfw() ? "feed.nsfw.turn_off" : "feed.nsfw.turn_on", b -> toggleNsfw());
+        y += 26;
+
         accountY = y;
         int ax = fx;
         RetroButton code = button(ax, y + 12, 0, "feed.account.profile.new_code", b -> confirmNewCode());
@@ -205,6 +211,7 @@ public class ProfileScreen extends ShellScreen {
         discordButton.active = !busy;
         avatarButton.active = !busy;
         hiddenButton.active = !busy && com.feed.client.HiddenPlayers.count() > 0;
+        nsfwButton.active = !busy;
         for (RetroButton b : accountButtons) {
             b.active = !busy;
         }
@@ -231,6 +238,35 @@ public class ProfileScreen extends ShellScreen {
             busy = false;
             AccountManager.INSTANCE.updateAccount(updated);
             setStatus(Component.translatable("feed.account.avatar.saved"), AccountUi.GREEN);
+            rebuildWidgets();
+        }, this::fail);
+    }
+
+    /** On: only after "I am 18 or older"; off: right away. */
+    private void toggleNsfw() {
+        AccountApi.Account a = acc();
+        if (busy || a == null) {
+            return;
+        }
+        if (a.showNsfw()) {
+            saveNsfw(false);
+            return;
+        }
+        this.minecraft.setScreen(new RetroConfirmScreen(this,
+                Component.translatable("feed.nsfw.confirm_title"),
+                Component.translatable("feed.nsfw.confirm"),
+                Component.translatable("feed.nsfw.confirm_yes"), true, () -> {
+            this.minecraft.setScreen(this);
+            saveNsfw(true);
+        }));
+    }
+
+    private void saveNsfw(boolean on) {
+        busy = true;
+        AccountManager.thenOnMain(AccountManager.INSTANCE.api().setShowNsfw(on), updated -> {
+            busy = false;
+            AccountManager.INSTANCE.updateAccount(updated);
+            setStatus(Component.translatable(on ? "feed.nsfw.saved_on" : "feed.nsfw.saved_off"), AccountUi.GREEN);
             rebuildWidgets();
         }, this::fail);
     }
@@ -456,6 +492,10 @@ public class ProfileScreen extends ShellScreen {
         int hc = com.feed.client.HiddenPlayers.count();
         hint(g, hc == 0 ? tr("feed.hide.none") : tr("feed.hide.count", hc), hiddenY + 1, RetroUi.FG, textW);
         hint(g, tr("feed.hide.hint"), hiddenY + 11, RetroUi.GRAY, textW);
+
+        label(g, "feed.nsfw.label", nsfwY);
+        hint(g, tr(a.showNsfw() ? "feed.nsfw.value_on" : "feed.nsfw.value_off"), nsfwY + 1, a.showNsfw() ? RetroUi.ERROR : RetroUi.FG, textW);
+        hint(g, tr("feed.nsfw.hint"), nsfwY + 11, RetroUi.GRAY, textW);
 
         label(g, "feed.account.key.label", accountY);
         hint(g, tr("feed.account.key.value"), accountY + 1, RetroUi.GRAY, w - LABEL_W);

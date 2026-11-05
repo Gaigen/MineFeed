@@ -403,7 +403,9 @@ test("18+ communities", async () => {
   const cid = await community(a, "Nochnye");
   const forum = (await env.DB.prepare("SELECT forum_id FROM communities WHERE id = ?").bind(cid).first()).forum_id;
 
-  // the owner turns it on: the Discord forum becomes age-restricted
+  // the owner turns it on (after confirming the age): the Discord forum becomes age-restricted
+  assert.equal((await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { nsfw: true } })).data.code, "need_18");
+  await api("PATCH", "/v2/me", { key: a.key, body: { showNsfw: true } });
   const on = await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { nsfw: true } });
   assert.equal(on.data.community.nsfw, true);
   assert.ok(calls.some((c) => c.m === "PATCH" && c.p === `/channels/${forum}` && c.body.nsfw === true));

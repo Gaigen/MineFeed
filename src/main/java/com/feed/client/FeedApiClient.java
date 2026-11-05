@@ -98,7 +98,8 @@ public final class FeedApiClient {
             ApiError e = AccountApi.unwrap(ex);
             Minecraft.getInstance().execute(() -> AccountManager.INSTANCE.handleError(e));
             throw new CompletionException(e.isNetwork() ? new FeedApiException(e)
-                    : new FeedApiException(e.status, "banned".equals(e.code)
+                    : new FeedApiException(e.status, "banned".equals(e.code) || "need_18".equals(e.code) || "nsfw_off".equals(e.code)
+                    || "community_not_18".equals(e.code)
                     ? com.feed.client.screen.AccountUi.describe(e).getString() : e.getMessage()));
         });
     }
@@ -286,12 +287,20 @@ public final class FeedApiClient {
 
     /** imageJpeg: base64 JPEG from PostImages.encodeForUpload, or null. */
     public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg) {
-        return createPost(space, text, type, imageJpeg, null);
+        return createPost(space, text, type, imageJpeg, null, false, false);
+    }
+
+    public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg, List<String> pollOptions) {
+        return createPost(space, text, type, imageJpeg, pollOptions, false, false);
     }
 
     /** pollOptions: 2-4 options, or null for no poll. */
-    public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg, List<String> pollOptions) {
+    public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg, List<String> pollOptions,
+                                              boolean nsfw, boolean imageSpoiler) {
         JsonObject body = new JsonObject();
+        if (nsfw) {
+            body.addProperty("nsfw", true);
+        }
         if (pollOptions != null && !pollOptions.isEmpty()) {
             JsonObject poll = new JsonObject();
             JsonArray arr = new JsonArray();
@@ -306,6 +315,9 @@ public final class FeedApiClient {
             JsonObject img = new JsonObject();
             img.addProperty("type", "image/jpeg");
             img.addProperty("data", imageJpeg);
+            if (imageSpoiler) {
+                img.addProperty("spoiler", true);
+            }
             body.add("image", img);
         }
         return call("POST", "/v2/posts", body).thenApply(o -> toPost(o.getAsJsonObject("post")));
@@ -461,6 +473,7 @@ public final class FeedApiClient {
         p.space = str(o, "space");
         p.edited = o.has("editedAt") && !o.get("editedAt").isJsonNull();
         p.pinned = bool(o, "pinned");
+        p.nsfw = bool(o, "nsfw");
         if (o.has("poll") && o.get("poll").isJsonObject()) {
             applyPoll(p, o.getAsJsonObject("poll"));
         }
@@ -469,6 +482,7 @@ public final class FeedApiClient {
             p.imageUrl = str(img, "url");
             p.imageW = img.has("w") ? img.get("w").getAsInt() : 0;
             p.imageH = img.has("h") ? img.get("h").getAsInt() : 0;
+            p.imageSpoiler = bool(img, "spoiler");
         }
         return p;
     }
@@ -513,6 +527,7 @@ public final class FeedApiClient {
             c.imageUrl = str(img, "url");
             c.imageW = img.has("w") ? img.get("w").getAsInt() : 0;
             c.imageH = img.has("h") ? img.get("h").getAsInt() : 0;
+            c.imageSpoiler = bool(img, "spoiler");
         }
         return c;
     }

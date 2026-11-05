@@ -33,6 +33,12 @@ public class TagTextTest {
         check(kinds("[1 2] [a b c] [1 2 3 moon]").isEmpty(), "not coords: " + kinds("[1 2] [a b c] [1 2 3 moon]"));
         check(TagText.coords(1, -2, 3, "minecraft:the_end").equals("[1 -2 3 end]"), "coords format");
         check(TagText.coords(1, 2, 3, "minecraft:overworld").equals("[1 2 3]"), "coords overworld");
+        List<TagText.Seg> sp = TagText.segments("a ||b @c|| d");
+        check(sp.size() == 3 && sp.get(1).kind() == TagText.Kind.SPOILER && sp.get(1).text().equals("b @c"), "spoiler");
+        check(TagText.segments("a || b").size() == 1, "lone marks are text");
+        check(TagText.closeSpoilers(List.of("x ||one", "two", "three|| y")).equals(List.of("x ||one||", "||two||", "||three|| y")),
+                "spoiler over lines: " + TagText.closeSpoilers(List.of("x ||one", "two", "three|| y")));
+        check("a \u2592\u2592\u2592 b".equals(TagText.hideSpoilers("a ||secret|| b")), "hide");
         System.out.println("TagTextTest OK");
     }
 }

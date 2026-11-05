@@ -30,7 +30,7 @@ public final class AccountApi {
     public record Account(String id, String tag, String nick, long createdAt,
                           boolean tagProtected, boolean discordLinked, Long canChangeTagAt,
                           String discordUsername, String lostTag, String claimableTag,
-                          String avatarChoice, String avatar, String skin, boolean hasDiscordAvatar) {}
+                          String avatarChoice, String avatar, String skin, boolean hasDiscordAvatar, boolean showNsfw) {}
 
     public record Session(Account account, String key, String recoveryCode) {}
 
@@ -132,6 +132,13 @@ public final class AccountApi {
     public CompletableFuture<Account> setSkin(String uuid) {
         JsonObject body = new JsonObject();
         body.addProperty("skin", uuid);
+        return send("PATCH", "/v2/me", body, true).thenApply(AccountApi::account);
+    }
+
+    /** "Show 18+": turning it on is the player's confirmation of being 18 or older. */
+    public CompletableFuture<Account> setShowNsfw(boolean on) {
+        JsonObject body = new JsonObject();
+        body.addProperty("showNsfw", on);
         return send("PATCH", "/v2/me", body, true).thenApply(AccountApi::account);
     }
 

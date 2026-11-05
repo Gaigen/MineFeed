@@ -65,6 +65,10 @@ public class JoinCodeScreen extends ModalScreen {
         CommunityApi.join(value).whenComplete((r, ex) -> this.minecraft.execute(() -> {
             busy = false;
             if (ex != null) {
+                if ("need_18".equals(CommunityApi.error(ex).code)) {
+                    confirm18();
+                    return;
+                }
                 setStatus(CommunityApi.describe(ex), RetroUi.ERROR);
                 return;
             }
@@ -77,6 +81,26 @@ public class JoinCodeScreen extends ModalScreen {
                 parent.switchSpace(r.community().id());
                 this.minecraft.setScreen(parent);
             }));
+        }));
+    }
+
+    /** An 18+ community: joining turns on "Show 18+" after the age confirmation, then tries again. */
+    private void confirm18() {
+        this.minecraft.setScreen(new RetroConfirmScreen(this,
+                Component.translatable("feed.nsfw.join_title"),
+                Component.translatable("feed.nsfw.join_confirm"),
+                Component.translatable("feed.nsfw.confirm_yes"), true, () -> {
+            this.minecraft.setScreen(this);
+            busy = true;
+            com.feed.client.account.AccountManager.thenOnMain(
+                    com.feed.client.account.AccountManager.INSTANCE.api().setShowNsfw(true), updated -> {
+                        busy = false;
+                        com.feed.client.account.AccountManager.INSTANCE.updateAccount(updated);
+                        submit();
+                    }, err -> {
+                        busy = false;
+                        setStatus(AccountUi.describe(err), RetroUi.ERROR);
+                    });
         }));
     }
 

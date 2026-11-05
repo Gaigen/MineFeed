@@ -1,6 +1,6 @@
 // Feed: posts live in Discord forum threads (written by a webhook as the player), D1 is the index.
 import * as A from "./avatars.js";
-import { HttpError } from "./util.js";
+import { HttpError, hideSpoilers } from "./util.js";
 import { rateLimit } from "./accounts.js";
 import { dapi, webhookName } from "./dapi.js";
 import * as N from "./notify.js";
@@ -44,6 +44,7 @@ export function cleanText(raw, max) {
 }
 
 export function threadName(text) {
+  text = hideSpoilers(text);
   const line = text.split("\n").find((l) => l.trim()) || text;
   const chars = [...line.trim()];
   return chars.length > 95 ? chars.slice(0, 94).join("") + "…" : chars.join("");
@@ -373,6 +374,9 @@ export async function feed(env, account, q, now) {
 export async function getPost(env, account, id, now) {
   const row = await loadPost(env, id);
   await spaceFor(env, account, row.space);
+  if (row.nsfw && !account.show_nsfw && !account.moderator && row.author_id !== account.id) {
+    throw new HttpError(403, "need_18", "Это 18+ пост. Включи «Показывать 18+» в настройках профиля");
+  }
   const [post] = await postsOut(env, account, [row]);
   const page = await commentsPage(env, row.id, null);
   return { post, ...page, now };

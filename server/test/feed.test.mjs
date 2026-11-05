@@ -61,6 +61,7 @@ function setup() {
 }
 
 test("text helpers", () => {
+  assert.equal(threadName("смотри ||он умрёт|| тут"), "смотри ▒▒▒ тут");
   assert.equal(cleanText("  §cHi\r\n\n\n\nthere\u200b  ", 500), "Hi\n\nthere");
   assert.throws(() => cleanText(" §a ", 500), /Пустой/);
   assert.throws(() => cleanText("x".repeat(501), 500), /длинный/);
@@ -465,6 +466,8 @@ test("18+ posts and spoilers", async () => {
 
   // comments of an 18+ post go through the 18+ forum webhook
   const pid = r.data.post.id;
+  assert.equal((await api("GET", `/v2/posts/${pid}`, { key: b.key })).data.code, "need_18");
+  assert.equal((await api("GET", `/v2/posts/${pid}`, { key: a.key })).status, 200);
   assert.equal((await api("POST", `/v2/posts/${pid}/comments`, { key: a.key, body: { text: "ком" }, now: T0 + 4000 })).status, 201);
   assert.ok(calls.some((c) => c.path === "/api/v10/webhooks/wh2/tok2" && c.search.includes(pid)));
 

@@ -22,7 +22,7 @@ public final class PostCard {
     private static final int TEXT_TOP = 28;
     private static final int FOOTER = 18;
 
-    public enum Kind { CARD, AUTHOR, MENTION, HASHTAG, COORDS, POLL, REACTION, IMAGE, COMMENTS }
+    public enum Kind { CARD, AUTHOR, MENTION, HASHTAG, COORDS, POLL, REACTION, IMAGE, COMMENTS, SPOILER }
 
     public static final int POLL_ROW = 14;
 
@@ -39,7 +39,7 @@ public final class PostCard {
     }
 
     public static Layout layout(Font font, Post post, int w, int screenH, boolean full) {
-        List<String> lines = RetroUi.wrap(font, post.text != null ? post.text : "", w - PAD * 2);
+        List<String> lines = wrap(font, post.text, w - PAD * 2);
         int h = TEXT_TOP + lines.size() * LINE;
         int iw = 0;
         int ih = 0;
@@ -51,6 +51,20 @@ public final class PostCard {
         }
         h += pollHeight(post);
         return new Layout(post, lines, w, h + FOOTER, iw, ih);
+    }
+
+    /** Word wrap that keeps ||spoilers|| drawable line by line. */
+    public static List<String> wrap(Font font, String text, int w) {
+        return TagText.closeSpoilers(RetroUi.wrap(font, text != null ? text : "", w));
+    }
+
+    /** Opens what a SPOILER hit points at: "img" = the picture, else the texts. */
+    public static void reveal(String id, Hit hit) {
+        Spoilers.open("img".equals(hit.value()) ? Spoilers.image(id) : id);
+    }
+
+    private static boolean coveredImage(Post p) {
+        return p.imageSpoiler && !Spoilers.isOpen(Spoilers.image(p.id));
     }
 
     private static int pollHeight(Post post) {
@@ -72,8 +86,17 @@ public final class PostCard {
         return p.authorTag != null ? "@" + p.authorTag : "";
     }
 
+    public static final String NSFW = "18+";
+
     private static int chipX(Font font, Layout l, int x) {
-        return x + l.w() - PAD - RetroUi.chipWidth(font, l.post().displayPrefix());
+        int cx = x + l.w() - PAD - RetroUi.chipWidth(font, l.post().displayPrefix());
+        return cx;
+    }
+
+    /** Left edge of the chips on the right (type, and 18+ before it). */
+    private static int chipsX(Font font, Layout l, int x) {
+        int cx = chipX(font, l, x);
+        return l.post().nsfw ? cx - RetroUi.chipWidth(font, NSFW) - 3 : cx;
     }
 
     private static int imageY(Layout l, int y) {
@@ -95,7 +118,7 @@ public final class PostCard {
 
         RetroUi.drawAvatar(g, font, FeedApiClient.avatarKey(post.uuid, post.avatar), author(post), x + PAD, y + PAD, 16);
 
-        int chipX = chipX(font, l, x);
+        int chipX = chipsX(font, l, x);
         int nx = x + PAD + 21;
         boolean own = FeedApiClient.isMine(post.uuid);
         String name = FeedUtil.clip(font, author(post), Math.max(20, chipX - nx - 8));
@@ -119,19 +142,28 @@ public final class PostCard {
             meta = " \u00b7 " + meta;
         }
         g.drawString(font, FeedUtil.clip(font, meta, Math.max(20, chipX - mx - 4)), mx, y + PAD + 9, RetroUi.GRAY, false);
-        RetroUi.drawChip(g, font, post.displayPrefix(), chipX, y + PAD, post.prefixColor(), false, cardBg);
+        RetroUi.drawChip(g, font, post.displayPrefix(), chipX(font, l, x), y + PAD, post.prefixColor(), false, cardBg);
+        if (post.nsfw) {
+            int nw = RetroUi.chipWidth(font, NSFW);
+            RetroUi.drawChip(g, font, NSFW, chipX(font, l, x) - nw - 3, y + PAD, RetroUi.ERROR, false, cardBg);
+        }
 
         int ly = y + TEXT_TOP;
         for (String line : l.lines()) {
-            drawRich(g, font, line, x + PAD, ly, RetroUi.FG, interactive ? mouseX : -1, mouseY);
+            drawRich(g, font, line, x + PAD, ly, RetroUi.FG, interactive ? mouseX : -1, mouseY, Spoilers.isOpen(post.id));
             ly += LINE;
         }
         if (post.imageUrl != null) {
             int ix = x + PAD;
             int iy = imageY(l, y);
             g.fill(ix + 2, iy + 2, ix + l.imgW() + 3, iy + l.imgH() + 3, RetroUi.SHADOW);
-            ImageBox.draw(g, font, post.imageUrl, ix, iy, l.imgW(), l.imgH());
-            if (interactive && mouseX >= ix && mouseX < ix + l.imgW() && mouseY >= iy && mouseY < iy + l.imgH()) {
+            boolean imgHover = interactive && mouseX >= ix && mouseX < ix + l.imgW() && mouseY >= iy && mouseY < iy + l.imgH();
+            if (coveredImage(post)) {
+                Spoilers.drawCover(g, font, ix, iy, l.imgW(), l.imgH(), imgHover);
+            } else {
+                ImageBox.draw(g, font, post.imageUrl, ix, iy, l.imgW(), l.imgH());
+            }
+            if (imgHover && !coveredImage(post)) {
                 g.renderOutline(ix - 1, iy - 1, l.imgW() + 2, l.imgH() + 2, RetroUi.FG);
                 int px = ix + l.imgW() - 12;
                 int py = iy + l.imgH() - 12;
@@ -203,8 +235,32 @@ public final class PostCard {
 
     /** Same, underlining the link under the mouse. */
     public static void drawRich(GuiGraphics g, Font font, String line, int x, int y, int color, int mouseX, int mouseY) {
+        drawRich(g, font, line, x, y, color, mouseX, mouseY, false);
+    }
+
+    /** revealed: ||spoilers|| of this text were opened (else they are drawn as bars). */
+    public static void drawRich(GuiGraphics g, Font font, String line, int x, int y, int color, int mouseX, int mouseY,
+                                boolean revealed) {
         boolean row = mouseY >= y - 1 && mouseY < y + 10;
         for (TagText.Seg seg : TagText.segments(line)) {
+            if (seg.kind() == TagText.Kind.SPOILER) {
+                int w = font.width(seg.text());
+                if (revealed) {
+                    g.fill(x - 1, y - 1, x + w, y + 9, (RetroUi.GRAY & 0x00FFFFFF) | 0x38000000);
+                    drawTags(g, font, TagText.tagSegments(seg.text()), x, y, color, mouseX, row);
+                } else {
+                    boolean hv = row && mouseX >= x - 1 && mouseX < x + w;
+                    g.fill(x - 1, y - 1, x + w, y + 9, hv ? RetroUi.FG : RetroUi.GRAY);
+                }
+                x += w;
+                continue;
+            }
+            x = drawTags(g, font, List.of(seg), x, y, color, mouseX, row);
+        }
+    }
+
+    private static int drawTags(GuiGraphics g, Font font, List<TagText.Seg> segs, int x, int y, int color, int mouseX, boolean row) {
+        for (TagText.Seg seg : segs) {
             int c = switch (seg.kind()) {
                 case MENTION -> RetroUi.ACCENT;
                 case HASHTAG -> RetroUi.CYAN;
@@ -218,11 +274,36 @@ public final class PostCard {
             }
             x += w;
         }
+        return x;
     }
 
     /** Clickable thing under the mouse in a wrapped line: "@tag" (player) or "#tag" (hashtag), else null. */
     public static String linkAt(Font font, String line, int x, double mouseX) {
+        return linkAt(font, line, x, mouseX, false);
+    }
+
+    /** Also "!" for a closed ||spoiler|| (a click opens it); inside opened ones links work as usual. */
+    public static String linkAt(Font font, String line, int x, double mouseX, boolean revealed) {
         for (TagText.Seg seg : TagText.segments(line)) {
+            int w = font.width(seg.text());
+            if (seg.kind() == TagText.Kind.SPOILER) {
+                if (mouseX >= x - 1 && mouseX < x + w) {
+                    return revealed ? linkIn(font, TagText.tagSegments(seg.text()), x, mouseX) : "!";
+                }
+                x += w;
+                continue;
+            }
+            String link = linkIn(font, List.of(seg), x, mouseX);
+            if (link != null || (mouseX >= x && mouseX < x + w)) {
+                return link;
+            }
+            x += w;
+        }
+        return null;
+    }
+
+    private static String linkIn(Font font, List<TagText.Seg> segs, int x, double mouseX) {
+        for (TagText.Seg seg : segs) {
             int w = font.width(seg.text());
             if (mouseX >= x && mouseX < x + w) {
                 return switch (seg.kind()) {
@@ -262,7 +343,10 @@ public final class PostCard {
         int ly = y + TEXT_TOP;
         if (mouseY >= ly && mouseY < ly + l.lines().size() * LINE) {
             int index = (int) ((mouseY - ly) / LINE);
-            String link = linkAt(font, l.lines().get(index), x + PAD, mouseX);
+            String link = linkAt(font, l.lines().get(index), x + PAD, mouseX, Spoilers.isOpen(post.id));
+            if ("!".equals(link)) {
+                return new Hit(Kind.SPOILER, "text");
+            }
             if (link != null) {
                 return new Hit(link.startsWith("#") ? Kind.HASHTAG : link.startsWith("~") ? Kind.COORDS : Kind.MENTION, link.substring(1));
             }
@@ -270,7 +354,7 @@ public final class PostCard {
         if (post.imageUrl != null) {
             int iy = imageY(l, y);
             if (mouseX >= x + PAD && mouseX < x + PAD + l.imgW() && mouseY >= iy && mouseY < iy + l.imgH()) {
-                return new Hit(Kind.IMAGE, post.imageUrl);
+                return coveredImage(post) ? new Hit(Kind.SPOILER, "img") : new Hit(Kind.IMAGE, post.imageUrl);
             }
         }
         if (post.hasPoll() && !post.solved) {

@@ -720,7 +720,7 @@ public class FeedScreen extends ShellScreen {
         } else {
             PixelIcon.draw(g, c.isOwner() ? "crown" : "lock", x, TITLE_Y, RetroUi.ACCENT);
             drawTitle(g, c.name(), Component.translatable("feed.space.members", c.members()).getString()
-                    + " \u00b7 " + tr("feed.space.closed"), x + 10, TITLE_Y, right);
+                    + " \u00b7 " + tr("feed.space.closed") + (c.nsfw() ? " \u00b7 18+" : ""), x + 10, TITLE_Y, right);
         }
 
         int tx = x;
@@ -935,6 +935,10 @@ public class FeedScreen extends ShellScreen {
             case POLL -> com.feed.client.PostActions.vote(post, Integer.parseInt(hit.value()), this::relayout);
             case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
             case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+            case SPOILER -> {
+                PostCard.reveal(post.id, hit);
+                relayout();
+            }
             default -> this.minecraft.setScreen(new PostScreen(this, post));
         }
         return true;

@@ -25,6 +25,10 @@ public class Post {
     public int imageH;
     public boolean edited;
     public boolean pinned;
+    /** 18+ post of the global feed (only players who turned on "Show 18+" get them). */
+    public boolean nsfw;
+    /** The picture stays covered until clicked. */
+    public boolean imageSpoiler;
     /** Poll options, or null when the post has no poll. */
     public List<String> pollOptions;
     public int[] pollVotes;

@@ -51,6 +51,14 @@ public final class AccountUi {
             }
             case "bad_code":
                 return Component.translatable("feed.account.error.bad_code");
+            case "need_18":
+                return Component.translatable("feed.nsfw.need");
+            case "nsfw_locked":
+                return Component.translatable("feed.nsfw.locked");
+            case "community_not_18":
+                return Component.translatable("feed.nsfw.community_not_18");
+            case "nsfw_off":
+                return Component.translatable("feed.nsfw.off");
             case "banned": {
                 Long until = e.longExtra("until");
                 Component base = until == null ? Component.translatable("feed.account.error.banned_forever")

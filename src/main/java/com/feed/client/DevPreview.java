@@ -83,7 +83,7 @@ public final class DevPreview {
         CommunityApi.Community c = new CommunityApi.Community("sample", "Проект Шахта", "Копаем глубже всех", 12,
                 owner ? myId : "kuznec", owner ? "owner" : "member", 0, 1,
                 "Ванильное выживание с друзьями: строим шахту до бедрока и общий склад.", "discord.gg/example",
-                "https://discord.com/channels/1/2");
+                "https://discord.com/channels/1/2", false);
         List<CommunityApi.Code> codes = List.of(
                 new CommunityApi.Code("MF-8Q2K-7XPL", "для Discord-канала", 3, 10, now + 7 * day, true, false),
                 new CommunityApi.Code("KUZNEC", "лично Кузнецу", 0, 1, null, false, false),

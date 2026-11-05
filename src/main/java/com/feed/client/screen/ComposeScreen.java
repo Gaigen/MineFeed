@@ -50,6 +50,12 @@ public class ComposeScreen extends Screen {
     private Component status;
     private boolean sending;
     private Path attached;
+    /** The picture goes out covered (Discord: SPOILER_ file). */
+    private boolean imageSpoiler;
+    /** 18+ post of the global feed (only offered to players who turned on "Show 18+"). */
+    private boolean nsfw;
+    /** Posting into an 18+ community: every post there is 18+, the chip is just shown. */
+    private final boolean nsfwSpace;
     private String draft;
     private RetroButton attachButton;
     private RetroButton removeButton;
@@ -75,6 +81,7 @@ public class ComposeScreen extends Screen {
         this.space = parent.space();
         var c = parent.community();
         this.where = c != null ? c.name() : Component.translatable("feed.space.global").getString();
+        this.nsfwSpace = c != null && c.nsfw();
         this.selected = type;
         this.prefill = prefill;
         this.editing = null;
@@ -88,6 +95,7 @@ public class ComposeScreen extends Screen {
         this.feed = back instanceof FeedScreen f ? f : null;
         this.space = post.space;
         this.where = where;
+        this.nsfwSpace = false;
         this.selected = post.postType();
         this.prefill = post.text;
         this.editing = post;
@@ -185,7 +193,10 @@ public class ComposeScreen extends Screen {
             attachButton = addRenderableWidget(new RetroButton(inputX, attachY + (ATTACH_H - 18) / 2, 100, 18,
                     Component.translatable("feed.compose.screenshot"), b -> pickScreenshot()));
             removeButton = addRenderableWidget(new RetroButton(inputX + inputW - 70, attachY + (ATTACH_H - 18) / 2, 70, 18,
-                    Component.translatable("feed.compose.remove_image"), b -> attached = null));
+                    Component.translatable("feed.compose.remove_image"), b -> {
+                        attached = null;
+                        imageSpoiler = false;
+                    }));
         } else {
             attachButton = null;
             removeButton = null;
@@ -373,13 +384,13 @@ public class ComposeScreen extends Screen {
                 });
                 return null;
             }
-            send(text, jpeg, pollOptions);
+            send(text, jpeg, pollOptions, nsfw && !nsfwSpace, file != null && imageSpoiler);
             return null;
         });
     }
 
-    private void send(String text, String jpeg, List<String> pollOptions) {
-        FeedApiClient.INSTANCE.createPost(space, text, selected, jpeg, pollOptions).whenComplete((post, ex) ->
+    private void send(String text, String jpeg, List<String> pollOptions, boolean asNsfw, boolean spoiler) {
+        FeedApiClient.INSTANCE.createPost(space, text, selected, jpeg, pollOptions, asNsfw, spoiler).whenComplete((post, ex) ->
                 this.minecraft.execute(() -> {
                     sending = false;
                     sendButton.active = true;
@@ -426,6 +437,16 @@ public class ComposeScreen extends Screen {
         if (button == 0 && !editMode()) {
             int cx = panelLeft() + 10;
             int cy = panelTop() + 24;
+            if (nsfwChipShown() && !nsfwSpace
+                    && inside(mouseX, mouseY, nsfwChipX(), cy, RetroUi.chipWidth(this.font, PostCard.NSFW), RetroUi.CHIP_H)) {
+                nsfw = !nsfw;
+                return true;
+            }
+            if (attached != null && removeButton != null
+                    && inside(mouseX, mouseY, spoilerChipX(), spoilerChipY(), RetroUi.chipWidth(this.font, spoilerLabel()), RetroUi.CHIP_H)) {
+                imageSpoiler = !imageSpoiler;
+                return true;
+            }
             for (PostType t : PostType.values()) {
                 int w = RetroUi.chipWidth(this.font, chipLabel(t));
                 if (mouseX >= cx && mouseX < cx + w && mouseY >= cy && mouseY < cy + RetroUi.CHIP_H) {
@@ -440,6 +461,38 @@ public class ComposeScreen extends Screen {
             return clickTagRow(mouseX, mouseY);
         }
         return false;
+    }
+
+    /** "18+" chip at the right of the type row: clickable in the global feed, a plain mark in an 18+ community. */
+    private boolean nsfwChipShown() {
+        if (editMode()) {
+            return false;
+        }
+        if (nsfwSpace) {
+            return true;
+        }
+        var a = com.feed.client.account.AccountManager.INSTANCE.account();
+        return (space == null || "global".equals(space)) && a != null && a.showNsfw();
+    }
+
+    private int nsfwChipX() {
+        return panelLeft() + panelWidth() - 10 - RetroUi.chipWidth(this.font, PostCard.NSFW);
+    }
+
+    private String spoilerLabel() {
+        return (imageSpoiler ? "\u2713 " : "") + Component.translatable("feed.spoiler").getString();
+    }
+
+    private int spoilerChipX() {
+        return removeButton.getX() - 6 - RetroUi.chipWidth(this.font, spoilerLabel());
+    }
+
+    private int spoilerChipY() {
+        return attachY() + (ATTACH_H - RetroUi.CHIP_H) / 2;
+    }
+
+    private static boolean inside(double mx, double my, int x, int y, int w, int h) {
+        return mx >= x && mx < x + w && my >= y && my < y + h;
     }
 
     private static String chipLabel(PostType t) {
@@ -490,6 +543,14 @@ public class ComposeScreen extends Screen {
             RetroUi.drawChip(g, this.font, label, cx, cy, t.accent(), t == selected);
             cx += RetroUi.chipWidth(this.font, label) + 6;
         }
+        if (nsfwChipShown()) {
+            int nx = nsfwChipX();
+            boolean hv = !nsfwSpace && inside(mouseX, mouseY, nx, cy, RetroUi.chipWidth(this.font, PostCard.NSFW), RetroUi.CHIP_H);
+            RetroUi.drawChip(g, this.font, PostCard.NSFW, nx, cy, hv && !nsfw ? RetroUi.FG : RetroUi.ERROR, nsfw || nsfwSpace);
+            if (hv) {
+                setTooltipForNextRenderPass(Component.translatable(nsfw ? "feed.compose.nsfw_on" : "feed.compose.nsfw_tip"));
+            }
+        }
         if (editMode()) {
             g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font,
                             Component.translatable("feed.compose.edit_tip").getString(), x + w - 10 - cx),
@@ -513,8 +574,15 @@ public class ComposeScreen extends Screen {
             int tw = th * 16 / 9;
             int[] s = t != null ? ImageBox.fit(t.w(), t.h(), tw, th) : new int[]{tw, th};
             ImageBox.draw(g, this.font, t, PostImages.thumbFailed(attached), x + 10, attachY + 1 + (th - s[1]) / 2, s[0], s[1]);
-            String name = com.feed.client.FeedUtil.clip(this.font, attached.getFileName().toString(), w - 20 - tw - 8 - 76);
+            int sx = spoilerChipX();
+            String name = com.feed.client.FeedUtil.clip(this.font, attached.getFileName().toString(), Math.max(10, sx - 6 - (x + 10 + tw + 8)));
             g.drawString(this.font, name, x + 10 + tw + 8, attachY + (ATTACH_H - 8) / 2, RetroUi.FG, false);
+            String sl = spoilerLabel();
+            boolean hv = inside(mouseX, mouseY, sx, spoilerChipY(), RetroUi.chipWidth(this.font, sl), RetroUi.CHIP_H);
+            RetroUi.drawChip(g, this.font, sl, sx, spoilerChipY(), hv && !imageSpoiler ? RetroUi.FG : RetroUi.ACCENT, imageSpoiler);
+            if (hv) {
+                setTooltipForNextRenderPass(Component.translatable("feed.compose.spoiler_tip"));
+            }
         } else {
             String tip = Component.translatable("feed.compose.screenshot_tip").getString();
             g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, tip, w - 20 - 108), x + 10 + 108,
