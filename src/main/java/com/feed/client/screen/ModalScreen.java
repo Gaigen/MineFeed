@@ -20,6 +20,8 @@ public abstract class ModalScreen extends RetroScreen {
     protected static final int DIM = 0xC8000000;
 
     protected final FeedScreen parent;
+    /** Screen drawn behind the dialog and returned to on close (the page it was opened from). */
+    private net.minecraft.client.gui.screens.Screen back;
     protected int px;
     protected int py;
     protected int pw;
@@ -37,6 +39,15 @@ public abstract class ModalScreen extends RetroScreen {
     protected ModalScreen(Component title, FeedScreen parent) {
         super(title);
         this.parent = parent;
+        this.back = parent;
+    }
+
+    /** Opened from another page (not the feed): show it behind and return there. */
+    public ModalScreen from(net.minecraft.client.gui.screens.Screen screen) {
+        if (screen != null) {
+            this.back = screen;
+        }
+        return this;
     }
 
     /** Call at the start of init(). */
@@ -81,9 +92,9 @@ public abstract class ModalScreen extends RetroScreen {
 
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        if (parent != null && !backdropFailed && parent.width == this.width && parent.height == this.height) {
+        if (back != null && !backdropFailed && back.width == this.width && back.height == this.height) {
             try {
-                parent.render(g, -1, -1, partialTick);
+                back.render(g, -1, -1, partialTick);
             } catch (RuntimeException e) {
                 backdropFailed = true;
             }
@@ -112,8 +123,8 @@ public abstract class ModalScreen extends RetroScreen {
     /** Window resized: re-layout the feed behind too, so the backdrop keeps matching. */
     @Override
     public void resize(net.minecraft.client.Minecraft mc, int w, int h) {
-        if (parent != null) {
-            parent.resize(mc, w, h);
+        if (back != null) {
+            back.resize(mc, w, h);
         }
         super.resize(mc, w, h);
     }
@@ -200,6 +211,6 @@ public abstract class ModalScreen extends RetroScreen {
 
     @Override
     public void onClose() {
-        this.minecraft.setScreen(parent);
+        this.minecraft.setScreen(back);
     }
 }

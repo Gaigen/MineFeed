@@ -1,25 +1,30 @@
 package com.feed.client.screen;
 
+import com.feed.client.FeedApiClient;
+import com.feed.client.FeedUtil;
 import com.feed.client.account.AccountApi;
 import com.feed.client.account.AccountManager;
 import com.feed.client.account.TagRules;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
+import org.lwjgl.glfw.GLFW;
 
-/** Own profile: change nick / @tag, recovery code, sign in with a code, sign out. */
+import java.util.ArrayList;
+import java.util.List;
+
+/** Account settings page: nick, @tag, avatar, Discord, recovery code / sign in / sign out — one row each. */
 @OnlyIn(Dist.CLIENT)
-public class ProfileScreen extends AccountPanelScreen {
+public class ProfileScreen extends ShellScreen {
 
-    private static final int SIDE_BTN_W = 66;
+    private static final int BTN_H = AccountUi.FIELD_H;
+    private static final int LABEL_W = 56;
     private static final int GAP = 6;
-    private static final int AVATAR_BTN_W = 86;
-    private static final int AVATAR = 26;
+    private static final int CARD_Y = 22;
+    private static final int CARD_H = 34;
 
-    private final Screen parent;
     private TagChecker checker;
     private String nickValue;
     private String tagValue;
@@ -29,19 +34,27 @@ public class ProfileScreen extends AccountPanelScreen {
     private RetroButton changeTag;
     private RetroButton discordButton;
     private RetroButton avatarButton;
+    private final List<RetroButton> accountButtons = new ArrayList<>();
+    private final List<EditBox> fields = new ArrayList<>();
     private boolean lostTagHandled;
     private boolean refreshed;
-    private String note;
-    private int infoY;
-    private int nickLabelY;
-    private int tagLabelY;
-    private int tagStatusY;
-    private int noteY;
+    private boolean busy;
+    private Component status = Component.empty();
+    private int statusColor = RetroUi.ERROR;
+    private int nickY;
+    private int tagY;
+    private int avatarY;
+    private int discordY;
+    private int accountY;
     private int statusY;
 
-    public ProfileScreen(Screen parent) {
-        super(Component.translatable("feed.account.profile.title"));
-        this.parent = parent;
+    public ProfileScreen(FeedScreen home) {
+        super(Component.translatable("feed.account.profile.title"), home);
+    }
+
+    @Override
+    protected String navId() {
+        return "profile";
     }
 
     private AccountApi.Account acc() {
@@ -53,13 +66,36 @@ public class ProfileScreen extends AccountPanelScreen {
         return a != null && a.canChangeTagAt() != null && a.canChangeTagAt() > System.currentTimeMillis();
     }
 
+    private void setStatus(Component text, int color) {
+        status = text == null ? Component.empty() : text;
+        statusColor = color;
+    }
+
+    private boolean isEnter(int keyCode) {
+        return keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER;
+    }
+
+    private int sideButtonW() {
+        int w = 56;
+        for (String k : new String[]{"feed.account.profile.save", "feed.account.profile.change", "feed.account.discord.link",
+                "feed.account.discord.unlink", "feed.account.avatar.change"}) {
+            w = Math.max(w, this.font.width(tr(k)) + 12);
+        }
+        return w;
+    }
+
+    private RetroButton button(int x, int y, int w, String key, net.minecraft.client.gui.components.Button.OnPress press) {
+        Component label = Component.translatable(key);
+        return addRenderableWidget(new RetroButton(x, y, w <= 0 ? this.font.width(label) + 12 : w, BTN_H, label, press));
+    }
+
     @Override
     protected void init() {
         AccountApi.Account a = acc();
         if (a == null) {
             this.minecraft.tell(() -> {
                 if (this.minecraft.screen == this) {
-                    this.minecraft.setScreen(new WelcomeScreen(parent));
+                    this.minecraft.setScreen(new WelcomeScreen(home()));
                 }
             });
             return;
@@ -68,67 +104,65 @@ public class ProfileScreen extends AccountPanelScreen {
             nickValue = a.nick();
             tagValue = a.tag();
         }
+        fields.clear();
+        accountButtons.clear();
         checker = new TagChecker(a.tag());
-        int w = panelWidth() - PAD * 2;
-        note = Component.translatable("feed.account.tag.rules").getString();
-        int noteH = AccountUi.wrappedHeight(this.font, note, w);
-        int y = layoutPanel(3 * LINE + 8 + LINE + AccountUi.FIELD_H + 6 + LINE + AccountUi.FIELD_H + 3 + LINE
-                + noteH + 4 + LINE + 4 + BTN_H + 6 + BTN_H);
-        infoY = y;
-        discordButton = addRenderableWidget(new RetroButton(innerX() + innerW() - SIDE_BTN_W, infoY + 2 * LINE - 3,
-                SIDE_BTN_W, 14, Component.translatable(a.discordLinked() ? "feed.account.discord.unlink" : "feed.account.discord.link"),
-                b -> discordAction()));
-        avatarButton = addRenderableWidget(new RetroButton(innerX() + innerW() - AVATAR_BTN_W, infoY - 3,
-                AVATAR_BTN_W, 14, Component.translatable("feed.account.avatar." + avatarChoice(a)), b -> cycleAvatar()));
-        y += 3 * LINE + 8;
+        int x = contentLeft();
+        int w = contentWidth();
+        int bw = sideButtonW();
+        int fx = x + LABEL_W;
+        int fw = w - LABEL_W - bw - GAP;
+        int bx = x + w - bw;
 
-        int fieldW = innerW() - SIDE_BTN_W - GAP;
-        nickLabelY = y;
-        y += LINE;
-        nick = addField(AccountUi.field(this.font, innerX(), y, fieldW, TagRules.NICK_MAX,
-                Component.translatable("feed.account.nick.hint")));
+        Component back = Component.translatable("feed.account.profile.back");
+        int backW = this.font.width(back) + 12;
+        addRenderableWidget(new RetroButton(x + w - backW, 5, backW, 13, back, b -> openPlayer(ownId())));
+
+        int y = CARD_Y + CARD_H + 10;
+        nickY = y;
+        nick = AccountUi.field(this.font, fx, y, fw, TagRules.NICK_MAX, Component.translatable("feed.account.nick.hint"));
+        fields.add(addRenderableWidget(nick));
         nick.setValue(nickValue);
-        nick.setResponder(s -> nickValue = s);
-        saveNick = addRenderableWidget(new RetroButton(innerX() + fieldW + GAP, y - 1, SIDE_BTN_W, AccountUi.FIELD_H + 2,
-                Component.translatable("feed.account.profile.save"), b -> saveNick()));
-        y += AccountUi.FIELD_H + 6;
+        nick.setResponder(v -> nickValue = v);
+        saveNick = button(bx, y, bw, "feed.account.profile.save", b -> saveNick());
+        y += 30;
 
-        tagLabelY = y;
-        y += LINE;
-        tag = addField(AccountUi.tagField(this.font, innerX(), y, fieldW,
-                Component.translatable("feed.account.tag.hint")));
-        tag.setResponder(s -> {
-            tagValue = s;
-            checker.onChanged(s);
+        tagY = y;
+        tag = AccountUi.tagField(this.font, fx, y, fw, Component.translatable("feed.account.tag.hint"));
+        fields.add(addRenderableWidget(tag));
+        tag.setResponder(v -> {
+            tagValue = v;
+            checker.onChanged(v);
         });
         tag.setValue(tagValue);
         checker.onChanged(tagValue);
         tag.setEditable(!onCooldown() || a.claimableTag() != null);
-        changeTag = addRenderableWidget(new RetroButton(innerX() + fieldW + GAP, y - 1, SIDE_BTN_W, AccountUi.FIELD_H + 2,
-                Component.translatable("feed.account.profile.change"), b -> confirmTag()));
-        y += AccountUi.FIELD_H + 3;
-        tagStatusY = y;
-        y += LINE;
-        noteY = y;
-        y += noteH + 4;
-        statusY = y;
-        y += LINE + 4;
+        changeTag = button(bx, y, bw, "feed.account.profile.change", b -> confirmTag());
+        y += 30;
 
-        int bw = buttonsRowWidth(3, GAP);
-        addRenderableWidget(new RetroButton(innerX(), y, bw, BTN_H,
-                Component.translatable("feed.account.profile.new_code"), b -> confirmNewCode()));
-        addRenderableWidget(new RetroButton(innerX() + bw + GAP, y, bw, BTN_H,
-                Component.translatable("feed.account.profile.code_login"),
-                b -> this.minecraft.setScreen(new RecoverScreen(this, parent))));
-        addRenderableWidget(new RetroButton(innerX() + (bw + GAP) * 2, y, innerW() - (bw + GAP) * 2, BTN_H,
-                Component.translatable("feed.account.profile.logout"), b -> confirmLogout()));
-        y += BTN_H + 6;
-        int half = buttonsRowWidth(2, GAP);
-        addRenderableWidget(new RetroButton(innerX(), y, half, BTN_H,
-                Component.translatable("feed.account.discord.server"),
-                b -> net.minecraft.Util.getPlatform().openUri(com.feed.client.account.UpdateChecker.discordUrl())));
-        addRenderableWidget(new RetroButton(innerX() + half + GAP, y, innerW() - half - GAP, BTN_H,
-                Component.translatable("feed.account.back"), b -> onClose()));
+        avatarY = y;
+        avatarButton = button(bx, y, bw, "feed.account.avatar.change", b -> cycleAvatar());
+        y += 26;
+
+        discordY = y;
+        discordButton = button(bx, y, bw, a.discordLinked() ? "feed.account.discord.unlink" : "feed.account.discord.link",
+                b -> discordAction());
+        y += 26;
+
+        accountY = y;
+        int ax = fx;
+        RetroButton code = button(ax, y + 12, 0, "feed.account.profile.new_code", b -> confirmNewCode());
+        ax += code.getWidth() + 4;
+        RetroButton login = button(ax, y + 12, 0, "feed.account.profile.code_login",
+                b -> this.minecraft.setScreen(new RecoverScreen(this, home())));
+        ax += login.getWidth() + 4;
+        RetroButton logout = button(ax, y + 12, 0, "feed.account.profile.logout", b -> confirmLogout());
+        logout.color(RetroUi.ERROR);
+        accountButtons.add(code);
+        accountButtons.add(login);
+        accountButtons.add(logout);
+        y += 12 + BTN_H + 8;
+        statusY = y;
         updateButtons();
 
         if (a.lostTag() != null && !lostTagHandled) {
@@ -147,7 +181,7 @@ public class ProfileScreen extends AccountPanelScreen {
                 }
             }, err -> {
                 if (this.minecraft.screen == this && AccountManager.INSTANCE.account() == null) {
-                    this.minecraft.setScreen(new WelcomeScreen(parent));
+                    this.minecraft.setScreen(new WelcomeScreen(home()));
                 }
             });
         }
@@ -164,6 +198,9 @@ public class ProfileScreen extends AccountPanelScreen {
                 && (!onCooldown() || isClaimValue());
         discordButton.active = !busy;
         avatarButton.active = !busy;
+        for (RetroButton b : accountButtons) {
+            b.active = !busy;
+        }
     }
 
     private static String avatarChoice(AccountApi.Account a) {
@@ -303,7 +340,7 @@ public class ProfileScreen extends AccountPanelScreen {
             AccountManager.INSTANCE.api().logout().whenComplete((v, ex) -> this.minecraft.execute(() -> {
                 busy = false;
                 AccountManager.INSTANCE.signOutLocal();
-                this.minecraft.setScreen(new WelcomeScreen(parent));
+                this.minecraft.setScreen(new WelcomeScreen(home()));
             }));
         }));
     }
@@ -311,7 +348,7 @@ public class ProfileScreen extends AccountPanelScreen {
     private void fail(com.feed.client.account.ApiError err) {
         busy = false;
         if (AccountManager.INSTANCE.account() == null) {
-            this.minecraft.setScreen(new WelcomeScreen(parent));
+            this.minecraft.setScreen(new WelcomeScreen(home()));
             return;
         }
         setStatus(AccountUi.describe(err), RetroUi.ERROR);
@@ -340,61 +377,86 @@ public class ProfileScreen extends AccountPanelScreen {
     }
 
     @Override
+    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        super.renderBackground(g, mouseX, mouseY, partialTick);
+        for (EditBox f : fields) {
+            if (f.isVisible()) {
+                AccountUi.drawField(g, f);
+            }
+        }
+    }
+
+    private void label(GuiGraphics g, String key, int y) {
+        g.drawString(this.font, tr(key), contentLeft() + 4, y + 4, RetroUi.GRAY, false);
+    }
+
+    private void hint(GuiGraphics g, String text, int y, int color, int maxW) {
+        g.drawString(this.font, FeedUtil.clip(this.font, text, maxW), contentLeft() + LABEL_W, y, color, false);
+    }
+
+    @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         super.render(g, mouseX, mouseY, partialTick);
         AccountApi.Account a = acc();
         if (a == null) {
             return;
         }
-        int x0 = innerX();
-        net.minecraft.resources.ResourceLocation head = com.feed.client.AvatarCache.get(
-                com.feed.client.FeedApiClient.avatarKey(a.id(), null));
-        if (head != null) {
-            g.blit(head, x0, infoY - 1, 0, 0, AVATAR, AVATAR, AVATAR, AVATAR);
-        } else {
-            g.fill(x0, infoY - 1, x0 + AVATAR, infoY - 1 + AVATAR, RetroUi.GRAY);
-            String letter = a.nick() == null || a.nick().isEmpty() ? "?" : a.nick().substring(0, 1).toUpperCase();
-            g.drawString(this.font, letter, x0 + (AVATAR - this.font.width(letter)) / 2 + 1, infoY - 1 + (AVATAR - 8) / 2, RetroUi.BG, false);
-        }
-        int x = x0 + AVATAR + 6;
-        int infoW = innerW() - AVATAR - 6;
-        String handle = "@" + a.tag();
-        g.drawString(this.font, handle, x, infoY, RetroUi.ACCENT, false);
-        g.drawString(this.font, this.font.plainSubstrByWidth(a.nick(), infoW - AVATAR_BTN_W - this.font.width(handle) - 12),
-                x + this.font.width(handle) + 8, infoY, RetroUi.FG, false);
-        g.drawString(this.font, Component.translatable("feed.account.profile.since", AccountUi.date(a.createdAt())),
-                x, infoY + LINE, RetroUi.GRAY, false);
-        Component discord;
-        if (!a.discordLinked()) {
-            discord = Component.translatable("feed.account.profile.discord_none");
-        } else if (a.discordUsername() != null) {
-            discord = Component.translatable(a.tagProtected() ? "feed.account.profile.discord_user_protected"
-                    : "feed.account.profile.discord_user", "@" + a.discordUsername());
-        } else {
-            discord = Component.translatable(a.tagProtected() ? "feed.account.profile.discord_protected"
-                    : "feed.account.profile.discord_linked");
-        }
-        g.drawString(this.font, this.font.plainSubstrByWidth(discord.getString(), infoW - SIDE_BTN_W - 6),
-                x, infoY + 2 * LINE, a.tagProtected() ? AccountUi.GREEN : RetroUi.GRAY, false);
-        x = x0;
+        int x = contentLeft();
+        int w = contentWidth();
+        int bw = sideButtonW();
+        int textW = w - LABEL_W - bw - GAP;
+        drawTitle(g, this.title.getString(), null, x, TITLE_Y, x + w - 70);
 
-        AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.nick.label"), x, nickLabelY);
-        AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.tag.label"), x, tagLabelY);
+        RetroUi.drawBox(g, x, CARD_Y, w, CARD_H, false);
+        RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(a.id(), null), a.nick(), x + 6, CARD_Y + 5, 24);
+        g.renderOutline(x + 6, CARD_Y + 5, 24, 24, RetroUi.GRAY);
+        g.drawString(this.font, FeedUtil.clip(this.font, a.nick(), w - 44), x + 36, CARD_Y + 7, RetroUi.FG, false);
+        String handle = "@" + a.tag();
+        g.drawString(this.font, handle, x + 36, CARD_Y + 18, RetroUi.ACCENT, false);
+        String since = " \u00b7 " + Component.translatable("feed.account.profile.since", AccountUi.date(a.createdAt())).getString();
+        g.drawString(this.font, FeedUtil.clip(this.font, since, w - 44 - this.font.width(handle)),
+                x + 36 + this.font.width(handle), CARD_Y + 18, RetroUi.GRAY, false);
+
+        label(g, "feed.account.nick.label", nickY);
+        hint(g, tr("feed.account.nick.rules"), nickY + 18, RetroUi.GRAY, w - LABEL_W);
+
+        label(g, "feed.account.tag.label", tagY);
         if (onCooldown() && a.claimableTag() != null && !isClaimValue()) {
-            g.drawString(this.font, Component.translatable("feed.account.tag.cooldown_claim", "@" + a.claimableTag()),
-                    x, tagStatusY, RetroUi.GRAY, false);
+            hint(g, tr("feed.account.tag.cooldown_claim", "@" + a.claimableTag()), tagY + 18, RetroUi.GRAY, w - LABEL_W);
         } else if (onCooldown() && a.claimableTag() == null) {
-            g.drawString(this.font, Component.translatable("feed.account.tag.cooldown", AccountUi.date(a.canChangeTagAt())),
-                    x, tagStatusY, RetroUi.GRAY, false);
+            hint(g, tr("feed.account.tag.cooldown", AccountUi.date(a.canChangeTagAt())), tagY + 18, RetroUi.GRAY, w - LABEL_W);
+        } else if (checker.state() == TagChecker.State.OWN) {
+            hint(g, tr("feed.account.tag.rules_short"), tagY + 18, RetroUi.GRAY, w - LABEL_W);
         } else {
-            g.drawString(this.font, checker.message(), x, tagStatusY, checker.color(), false);
+            hint(g, checker.message().getString(), tagY + 18, checker.color(), w - LABEL_W);
         }
-        AccountUi.drawWrapped(g, this.font, note, x, noteY, innerW(), RetroUi.SHADOW + 0x303030);
-        drawStatus(g, statusY);
+
+        label(g, "feed.account.avatar.label", avatarY);
+        String choice = avatarChoice(a);
+        hint(g, tr("feed.account.avatar.value." + choice), avatarY + 1, RetroUi.FG, textW);
+        hint(g, tr(a.hasDiscordAvatar() ? "feed.account.avatar.hint" : "feed.account.avatar.hint_nodiscord"),
+                avatarY + 11, RetroUi.GRAY, textW);
+
+        label(g, "feed.account.discord.label", discordY);
+        String dval = !a.discordLinked() ? tr("feed.account.discord.value_none")
+                : a.discordUsername() != null ? tr("feed.account.discord.value_user", "@" + a.discordUsername())
+                : tr("feed.account.discord.value_linked");
+        hint(g, dval, discordY + 1, RetroUi.FG, textW);
+        hint(g, a.tagProtected() ? tr("feed.account.discord.hint_protected") : tr("feed.account.discord.hint"),
+                discordY + 11, a.tagProtected() ? AccountUi.GREEN : RetroUi.GRAY, textW);
+
+        label(g, "feed.account.key.label", accountY);
+        hint(g, tr("feed.account.key.value"), accountY + 1, RetroUi.GRAY, w - LABEL_W);
+
+        if (busy) {
+            hint(g, tr("feed.account.working") + (RetroUi.blink() ? "_" : ""), statusY, RetroUi.GRAY, w - LABEL_W);
+        } else if (!status.getString().isEmpty()) {
+            AccountUi.drawWrapped(g, this.font, status.getString(), x + LABEL_W, statusY, w - LABEL_W, statusColor);
+        }
     }
 
     @Override
     public void onClose() {
-        this.minecraft.setScreen(parent);
+        openPlayer(ownId());
     }
 }

@@ -8,16 +8,28 @@ import net.minecraft.network.chat.Component;
 
 public class RetroButton extends Button {
 
+    private int color = -1;
+
     public RetroButton(int x, int y, int width, int height, Component message, OnPress onPress) {
         super(x, y, width, height, message, onPress, DEFAULT_NARRATION);
     }
 
+    /** Text/outline color when idle (e.g. accent for the main action); -1 = theme text color. */
+    public RetroButton color(int c) {
+        this.color = c;
+        return this;
+    }
+
     @Override
     protected void renderWidget(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        boolean inverted = this.active && this.isHoveredOrFocused();
-        RetroUi.drawBox(g, getX(), getY(), getWidth(), getHeight(), inverted);
+        boolean hover = this.active && this.isHoveredOrFocused();
+        int idle = this.color == -1 ? RetroUi.FG : this.color;
+        RetroUi.drawBox(g, getX(), getY(), getWidth(), getHeight(), hover);
+        if (!hover && this.active && this.color != -1) {
+            g.renderOutline(getX(), getY(), getWidth(), getHeight(), idle);
+        }
         Font font = Minecraft.getInstance().font;
-        int color = !this.active ? RetroUi.GRAY : (inverted ? RetroUi.BG : RetroUi.FG);
+        int color = !this.active ? RetroUi.GRAY : (hover ? RetroUi.STRONG : idle);
         int tx = getX() + (getWidth() - font.width(getMessage())) / 2;
         int ty = getY() + (getHeight() - font.lineHeight) / 2 + 1;
         g.drawString(font, getMessage(), tx, ty, color, false);

@@ -74,11 +74,13 @@ public class ComposeScreen extends Screen {
         updateAttachButtons();
 
         int buttonY = attachY + ATTACH_H + 8;
-        int buttonW = (inputW - 8) / 2;
-        sendButton = addRenderableWidget(new RetroButton(inputX, buttonY, buttonW, 18,
-                Component.translatable("feed.screen.compose.send"), b -> submit()));
-        addRenderableWidget(new RetroButton(inputX + buttonW + 8, buttonY, buttonW, 18,
-                Component.translatable("feed.screen.compose.cancel"), b -> onClose()));
+        Component send = Component.translatable("feed.screen.compose.send");
+        Component cancel = Component.translatable("feed.screen.compose.cancel");
+        int sw = this.font.width(send) + 16;
+        int cw = this.font.width(cancel) + 16;
+        sendButton = addRenderableWidget(new RetroButton(inputX + inputW - sw, buttonY, sw, 16, send, b -> submit())
+                .color(RetroUi.ACCENT));
+        addRenderableWidget(new RetroButton(inputX + inputW - sw - 6 - cw, buttonY, cw, 16, cancel, b -> onClose()));
 
         setInitialFocus(input);
     }
@@ -183,12 +185,20 @@ public class ComposeScreen extends Screen {
     }
 
     private static String chipLabel(PostType t) {
-        return t.prefix + " " + t.id.toUpperCase();
+        return t.prefix + " " + Component.translatable("feed.type." + t.id).getString();
     }
 
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, this.width, this.height, RetroUi.BG);
+        if (parent != null && parent.width == this.width && parent.height == this.height) {
+            parent.render(g, -1, -1, partialTick);
+            g.flush();
+            com.mojang.blaze3d.systems.RenderSystem.clear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT,
+                    net.minecraft.client.Minecraft.ON_OSX);
+            g.fill(0, 0, this.width, this.height, 0xC8000000);
+        } else {
+            g.fill(0, 0, this.width, this.height, RetroUi.BG);
+        }
         // Panel here: Screen.render() redraws background before widgets.
         RetroUi.drawBox(g, panelLeft(), panelTop(), panelWidth(), PANEL_H, false);
     }
@@ -201,16 +211,14 @@ public class ComposeScreen extends Screen {
         int y = panelTop();
         int w = panelWidth();
 
-        RetroUi.drawBlinkingTitle(g, this.font,
-                Component.translatable(selected.composeTitleKey()).getString().toUpperCase(),
-                x + 10, y + 9, selected.accent());
         Component hint = Component.translatable("feed.screen.compose.hint");
         var community = parent.community();
-        if (community != null && status == null && !sending) {
-            String where = Component.translatable("feed.compose.in", community.name()).getString();
-            g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, where, w - 20),
-                    x + 10, y + PANEL_H - 16, RetroUi.GRAY, false);
-        }
+        String title = Component.translatable("feed.compose.title").getString();
+        String where = community != null ? community.name() : Component.translatable("feed.space.global").getString();
+        g.drawString(this.font, title, x + 10, y + 9, RetroUi.FG, false);
+        g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, " \u00b7 " + where,
+                        Math.max(10, w - 30 - this.font.width(title) - this.font.width(hint))),
+                x + 10 + this.font.width(title), y + 9, RetroUi.GRAY, false);
         g.drawString(this.font, hint, x + w - 10 - this.font.width(hint), y + 9, RetroUi.GRAY, false);
 
         int cx = x + 10;
@@ -238,7 +246,7 @@ public class ComposeScreen extends Screen {
                     attachY + (ATTACH_H - 8) / 2, RetroUi.GRAY, false);
         }
 
-        int statusY = y + PANEL_H - 16;
+        int statusY = y + PANEL_H - 18;
         if (sending) {
             String text = Component.translatable(attached != null ? "feed.compose.uploading" : "feed.screen.compose.sending").getString()
                     + (RetroUi.blinkFast() ? "\u25ae" : "");

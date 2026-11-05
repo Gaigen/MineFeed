@@ -168,7 +168,7 @@ public final class NotificationPoller {
         }
     }
 
-    private static boolean hasUnreadId(String id) {
+    public static boolean hasUnreadId(String id) {
         for (FeedApiClient.Notif n : unread) {
             if (id.equals(n.id())) return true;
         }
@@ -211,18 +211,17 @@ public final class NotificationPoller {
             if (shown++ >= FeedConfig.maxVisibleToasts() || y + TOAST_H > g.guiHeight()) break;
             String thread = FeedUtil.clip(font, RetroUi.flatten(formatReply(FeedConfig.toastTitleTemplate(), t.notif)), 120);
             String body = FeedUtil.clip(font, RetroUi.flatten(formatReply(FeedConfig.toastBodyTemplate(), t.notif)), 120);
-            int w = Math.max(font.width(thread), font.width(body)) + 12;
+            int w = Math.max(font.width(thread) + 22, font.width(body)) + 12;
             int x = FeedConfig.toastOnLeft() ? FeedConfig.toastOffsetX() : sw - w - FeedConfig.toastOffsetX();
             x = Math.max(0, Math.min(x, sw - w));
             boolean hover = isHover(mc, x, y, w, TOAST_H);
-            g.fill(x + 2, y + 2, x + w + 2, y + TOAST_H + 2, RetroUi.SHADOW);
+            g.fill(x + 3, y + 3, x + w + 3, y + TOAST_H + 3, RetroUi.SHADOW);
             g.fill(x, y, x + w, y + TOAST_H, hover ? RetroUi.HOVER_BG : RetroUi.BG);
-            g.fill(x, y, x + w, y + 1, hover ? RetroUi.ACCENT : RetroUi.GRAY);
-            g.fill(x, y + TOAST_H - 1, x + w, y + TOAST_H, RetroUi.GRAY);
-            g.fill(x, y, x + 1, y + TOAST_H, RetroUi.GRAY);
-            g.fill(x + w - 1, y, x + w, y + TOAST_H, RetroUi.GRAY);
-            g.drawString(font, thread, x + 6, y + 4, RetroUi.ACCENT, false);
-            g.drawString(font, body, x + 6, y + 16, RetroUi.FG, false);
+            g.renderOutline(x, y, w, TOAST_H, RetroUi.ACCENT);
+            com.feed.client.screen.PixelIcon.draw(g, "bell", x + 6, y + 5, RetroUi.ACCENT);
+            com.feed.client.screen.RetroUi.drawAvatar(g, font, t.notif.avatar(), t.notif.author(), x + 16, y + 4, 9);
+            g.drawString(font, thread, x + 28, y + 5, RetroUi.ACCENT, false);
+            g.drawString(font, body, x + 6, y + 16, RetroUi.GRAY, false);
             t.x = x;
             t.y = y;
             t.w = w;

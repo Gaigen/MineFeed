@@ -53,12 +53,42 @@ public final class RetroUi {
     /** Inactive = gray mask; active = filled accent with dark glyph/count. */
     public static void drawReactionChip(GuiGraphics g, Font font, EmojiIcon icon, int count,
                                         int x, int y, int color, boolean inverted, int bg) {
+        drawReactionChip(g, font, icon, count, x, y, color, inverted, bg, false);
+    }
+
+    public static void drawReactionChip(GuiGraphics g, Font font, EmojiIcon icon, int count,
+                                        int x, int y, int color, boolean inverted, int bg, boolean hover) {
         String text = String.valueOf(count);
         int w = reactionChipWidth(font, icon, text);
-        g.fill(x, y, x + w, y + CHIP_H, inverted ? color : bg);
-        g.renderOutline(x, y, w, CHIP_H, inverted ? color : GRAY);
-        icon.draw(g, font, x + 4, y + 2, inverted ? BG : GRAY);
-        g.drawString(font, text, x + 4 + icon.width(font) + 3, y + 2, inverted ? BG : GRAY, false);
+        int c = inverted ? BG : hover ? FG : GRAY;
+        g.fill(x, y, x + w, y + CHIP_H, inverted ? color : hover ? HOVER_BG : bg);
+        g.renderOutline(x, y, w, CHIP_H, inverted ? color : hover ? FG : GRAY);
+        icon.draw(g, font, x + 4, y + 2, c);
+        g.drawString(font, text, x + 4 + icon.width(font) + 3, y + 2, c, false);
+    }
+
+    /** Player head / Discord picture, or a gray square with the first letter while it loads. */
+    public static void drawAvatar(GuiGraphics g, Font font, String key, String name, int x, int y, int size) {
+        net.minecraft.resources.ResourceLocation avatar = com.feed.client.AvatarCache.get(key);
+        if (avatar != null) {
+            g.blit(avatar, x, y, 0, 0, size, size, size, size);
+        } else {
+            g.fill(x, y, x + size, y + size, GRAY);
+            String letter = name == null || name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
+            g.drawString(font, letter, x + (size - font.width(letter)) / 2 + 1, y + (size - 8) / 2, BG, false);
+        }
+    }
+
+    /** Small hand-drawn button (13 px high in the mockup). */
+    public static void drawButton(GuiGraphics g, Font font, String label, int x, int y, int w, int h,
+                                  boolean hover, boolean enabled, int color) {
+        drawBox(g, x, y, w, h, hover && enabled);
+        int c = !enabled ? GRAY : hover ? FG : color;
+        g.drawString(font, label, x + (w - font.width(label)) / 2 + 1, y + (h - 8) / 2 + 1, c, false);
+    }
+
+    public static int buttonWidth(Font font, String label) {
+        return font.width(label) + 12;
     }
 
     public static boolean blink() {

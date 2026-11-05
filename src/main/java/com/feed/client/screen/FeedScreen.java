@@ -1,11 +1,8 @@
 package com.feed.client.screen;
 
-import com.feed.client.AvatarCache;
 import com.feed.client.CommunityApi;
 import com.feed.client.FeedApiClient;
-import com.feed.client.FeedTime;
 import com.feed.client.FeedUtil;
-import com.feed.client.NotificationPoller;
 import com.feed.client.ReactionHelper;
 import com.feed.client.account.AccountApi;
 import com.feed.client.account.AccountManager;
@@ -13,9 +10,7 @@ import com.feed.client.account.UpdateChecker;
 import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
 
@@ -29,21 +24,18 @@ import java.util.Objects;
  * Main screen: sidebar (feed, notifications, profile, communities) + the feed of the selected space.
  */
 @OnlyIn(Dist.CLIENT)
-public class FeedScreen extends RetroScreen {
+public class FeedScreen extends ShellScreen {
 
     private static final int PAGE_SIZE = 20;
-    private static final int PAD = 8;
-    private static final int TAB_GAP = 6;
-    private static final int CARD_GAP = 10;
-    private static final int SCROLL_STEP = 18;
+    private static final int CARD_GAP = 8;
+    private static final int TAB_GAP = 3;
     private static final int LOAD_MORE_THRESHOLD = 40;
-    private static final int TITLE_Y = 8;
-    private static final int TABS_Y = 24;
-    private static final int COMPOSE_Y = 42;
-    private static final int COMPOSE_H = 20;
-    private static final int LIST_TOP = COMPOSE_Y + COMPOSE_H + 8;
-    private static final int SB_ROW = 14;
-    private static final int SB_TOP = 26;
+    private static final int TABS_Y = 22;
+    private static final int COMPOSE_Y = 40;
+    private static final int COMPOSE_H = 22;
+    private static final int PROFILE_CARD_Y = 22;
+    private static final int PROFILE_CARD_H = 52;
+    private static final int BTN_H = 13;
     private static final long LIVE_POLL_MS = 30_000L;
     private static final long COMMUNITY_POLL_MS = 30_000L;
 
@@ -63,22 +55,24 @@ public class FeedScreen extends RetroScreen {
     private int scroll;
     private int contentHeight;
     private int pendingNewAbove;
-    private int sbScroll;
     private RetroButton manageButton;
     private RetroButton backButton;
     /** Open player profile (account id or tag); null = the normal feed of {@link #space}. */
     private String profileKey;
     private FeedApiClient.Profile profile;
 
-    private record Row(Post post, List<String> lines, int y, int height) {}
+    private RetroButton settingsButton;
 
-    /** One clickable line in the sidebar. */
-    private record Item(String label, int color, boolean active, String badge, int badgeColor, Runnable action) {}
+    private record Row(Post post, PostCard.Layout layout, int y) {
+        int height() {
+            return layout.h();
+        }
+    }
 
     private record Tab(String label, int color, boolean active, PostType type, boolean mine) {}
 
     public FeedScreen() {
-        super(Component.translatable("feed.brand.title"));
+        super(Component.translatable("feed.brand.title"), null);
     }
 
     /** Hashtags are gone in v2; kept for old call sites. */
@@ -110,7 +104,7 @@ public class FeedScreen extends RetroScreen {
         AccountManager.INSTANCE.refreshOnce();
         UpdateChecker.checkOnce();
 
-        manageButton = addRenderableWidget(new RetroButton(this.width - 8 - 70, 5, 70, 14,
+        manageButton = addRenderableWidget(new RetroButton(0, 5, 70, BTN_H,
                 Component.translatable("feed.space.manage"), b -> {
             CommunityApi.Community c = community();
             if (c != null) {
@@ -118,8 +112,13 @@ public class FeedScreen extends RetroScreen {
             }
         }));
         Component back = Component.translatable("feed.profile.back");
-        int bw = this.font.width(back) + 14;
-        backButton = addRenderableWidget(new RetroButton(this.width - 8 - bw, 5, bw, 14, back, b -> closeProfile()));
+        int bw = this.font.width(back) + 12;
+        backButton = addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - bw, 5, bw, BTN_H, back,
+                b -> closeProfile()));
+        Component settings = Component.translatable("feed.profile.settings");
+        int sw = this.font.width(settings) + 12;
+        settingsButton = addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - sw - 6, PROFILE_CARD_Y + 6,
+                sw, BTN_H, settings, b -> this.minecraft.setScreen(new ProfileScreen(this))));
         updateManageButton();
 
         relayout();
@@ -138,14 +137,17 @@ public class FeedScreen extends RetroScreen {
         CommunityApi.Community c = community();
         manageButton.visible = c != null && profileKey == null;
         if (backButton != null) {
-            backButton.visible = profileKey != null;
+            backButton.visible = profileKey != null && !ownProfile();
+        }
+        if (settingsButton != null) {
+            settingsButton.visible = profileKey != null && ownProfile();
         }
         if (c != null) {
             Component label = Component.translatable(c.isMod() ? "feed.space.manage" : "feed.space.info");
-            int w = this.font.width(label) + 14;
+            int w = this.font.width(label) + 12;
             manageButton.setMessage(label);
             manageButton.setWidth(w);
-            manageButton.setX(this.width - 8 - w);
+            manageButton.setX(contentLeft() + contentWidth() - w);
         }
     }
 
@@ -185,11 +187,6 @@ public class FeedScreen extends RetroScreen {
 
     // ---------- player profiles ----------
 
-    private String ownId() {
-        AccountApi.Account a = AccountManager.INSTANCE.account();
-        return a == null ? null : a.id();
-    }
-
     private boolean ownProfile() {
         return profile != null && FeedApiClient.isMine(profile.id());
     }
@@ -223,6 +220,7 @@ public class FeedScreen extends RetroScreen {
                 return;
             }
             profile = p;
+            updateManageButton();
             requestPage(null);
         }));
     }
@@ -381,20 +379,17 @@ public class FeedScreen extends RetroScreen {
 
     private void relayout() {
         rows.clear();
-        int textW = contentWidth() - PAD * 2;
         int y = 0;
         for (Post post : posts) {
             if (filter != null && post.postType() != filter) {
                 continue;
             }
-            List<String> lines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
-            int lineStep = this.font.lineHeight + 3;
-            int h = PAD + 16 + 6 + lines.size() * lineStep + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
-            if (post.imageUrl != null) {
-                h += imageSize(post, textW)[1] + 6;
-            }
-            rows.add(new Row(post, lines, y, h));
-            y += h + CARD_GAP;
+            PostCard.Layout l = PostCard.layout(this.font, post, contentWidth(), this.height, false);
+            rows.add(new Row(post, l, y));
+            y += l.h() + CARD_GAP;
+        }
+        if (!rows.isEmpty() && nextCursor == null && !loading) {
+            y += 14; // "that's all"
         }
         contentHeight = y;
         clampScroll();
@@ -402,219 +397,87 @@ public class FeedScreen extends RetroScreen {
 
     // ---------- geometry ----------
 
-    private int sidebarW() {
-        return Math.max(92, Math.min(132, this.width / 4));
+    @Override
+    protected String navId() {
+        if (profileKey != null) {
+            return ownProfile() || (profile == null && profileKey.equals(ownId())) ? "profile" : null;
+        }
+        return "global".equals(space) ? "feed" : "c:" + space;
     }
 
-    @Override
-    protected int contentWidth() {
-        return Math.min(420, this.width - sidebarW() - 24);
-    }
-
-    @Override
-    protected int contentLeft() {
-        int sb = sidebarW();
-        return sb + (this.width - sb - contentWidth()) / 2;
+    private int listTop() {
+        return profileKey != null ? PROFILE_CARD_Y + PROFILE_CARD_H + 8 : COMPOSE_Y + COMPOSE_H + 8;
     }
 
     private int listBottom() {
-        return this.height - 6;
+        return this.height - 4;
     }
 
     // ---------- rendering ----------
 
+    /** The profile card frame goes under the widgets (the settings button sits on it). */
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, this.width, this.height, RetroUi.BG);
-        g.fill(sidebarW(), 0, sidebarW() + 1, this.height, RetroUi.SHADOW);
+        super.renderBackground(g, mouseX, mouseY, partialTick);
+        if (profileKey != null) {
+            RetroUi.drawBox(g, contentLeft(), PROFILE_CARD_Y, contentWidth(), PROFILE_CARD_H, false);
+        }
     }
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         super.render(g, mouseX, mouseY, partialTick);
-        renderSidebar(g, mouseX, mouseY);
         renderHeader(g, mouseX, mouseY);
         renderList(g, mouseX, mouseY);
     }
 
-    private List<Item> topItems() {
-        List<Item> items = new ArrayList<>();
-        int unread = NotificationPoller.unreadCount();
-        items.add(new Item(tr("feed.nav.feed"), RetroUi.FG, "global".equals(space) && profileKey == null, null, 0, () -> switchSpace("global")));
-        items.add(new Item(tr("feed.nav.notifications"), RetroUi.FG, false, unread > 0 ? String.valueOf(unread) : null,
-                RetroUi.ACCENT, () -> this.minecraft.setScreen(new NotificationsScreen(this))));
-        items.add(new Item(tr("feed.nav.profile"), RetroUi.FG, profileKey != null && ownProfile(), null, 0,
-                () -> openProfile(ownId())));
-        items.add(new Item(tr("feed.nav.search"), RetroUi.FG, false, null, 0,
-                () -> this.minecraft.setScreen(new SearchScreen(this))));
-        items.add(new Item(tr("feed.nav.theme"), RetroUi.FG, false, null, 0,
-                () -> this.minecraft.setScreen(new ThemeScreen(this))));
-        items.add(new Item(tr("feed.nav.discord"), RetroUi.FG, false, null, 0,
-                () -> net.minecraft.Util.getPlatform().openUri(UpdateChecker.discordUrl())));
-        return items;
-    }
-
-    private List<Item> communityItems() {
-        List<Item> items = new ArrayList<>();
-        CommunityApi.Mine m = CommunityApi.cached();
-        if (m != null) {
-            for (CommunityApi.Community c : m.communities()) {
-                String badge = null;
-                int badgeColor = RetroUi.ACCENT;
-                if (c.isMod() && c.requests() > 0) {
-                    badge = "+" + c.requests();
-                    badgeColor = RetroUi.ERROR;
-                } else if (c.unread() > 0) {
-                    badge = String.valueOf(c.unread());
-                }
-                String id = c.id();
-                items.add(new Item((c.isOwner() ? "\u2605 " : "") + c.name(), RetroUi.FG, id.equals(space) && profileKey == null, badge, badgeColor,
-                        () -> switchSpace(id)));
-            }
-            for (CommunityApi.Pending p : m.pending()) {
-                items.add(new Item("\u231b " + p.name(), RetroUi.GRAY, false, null, 0, null));
-            }
-        }
-        items.add(new Item(tr("feed.nav.join"), RetroUi.ACCENT, false, null, 0,
-                () -> this.minecraft.setScreen(new JoinCodeScreen(this))));
-        CommunityApi.Application app = m == null ? null : m.application();
-        boolean owns = m != null && m.communities().stream().anyMatch(CommunityApi.Community::isOwner);
-        if (app != null && app.pending()) {
-            items.add(new Item(tr("feed.nav.applied"), RetroUi.GRAY, false, null, 0,
-                    () -> this.minecraft.setScreen(new ApplyScreen(this))));
-        } else if (!owns) {
-            items.add(new Item(tr("feed.nav.apply"), RetroUi.ACCENT, false, null, 0,
-                    () -> this.minecraft.setScreen(new ApplyScreen(this))));
-        }
-        return items;
-    }
-
-    private int communitiesTop() {
-        return SB_TOP + topItems().size() * SB_ROW + 8;
-    }
-
-    private int sidebarBottom() {
-        return this.height - 30 - (updateLabel() != null ? RetroUi.CHIP_H + 4 : 0);
-    }
-
-    private void renderSidebar(GuiGraphics g, int mouseX, int mouseY) {
-        int sw = sidebarW();
-        RetroUi.drawBlinkingTitle(g, this.font, "MineFeed", 6, TITLE_Y, RetroUi.ACCENT);
-        int y = SB_TOP;
-        for (Item it : topItems()) {
-            drawItem(g, it, y, mouseX, mouseY, sw);
-            y += SB_ROW;
-        }
-        int ct = communitiesTop();
-        g.drawString(this.font, tr("feed.nav.communities"), 8, ct, RetroUi.GRAY, false);
-        int listTop = ct + 12;
-        int bottom = sidebarBottom();
-        g.enableScissor(0, listTop, sw, bottom);
-        y = listTop - sbScroll;
-        for (Item it : communityItems()) {
-            if (y + SB_ROW > listTop && y < bottom) {
-                drawItem(g, it, y, mouseX, mouseY >= listTop && mouseY < bottom ? mouseY : -1, sw);
-            }
-            y += SB_ROW;
-        }
-        g.disableScissor();
-
-        String upd = updateLabel();
-        if (upd != null) {
-            RetroUi.drawChip(g, this.font, FeedUtil.clip(this.font, upd, sw - 20), 6, bottom + 2,
-                    UpdateChecker.state() == UpdateChecker.State.OUTDATED ? RetroUi.ERROR : RetroUi.ACCENT, false);
-        }
-        int py = this.height - 26;
-        g.fill(6, py - 4, sw - 6, py - 3, RetroUi.SHADOW);
-        boolean hover = mouseX >= 0 && mouseX < sw && mouseY >= py - 2 && mouseY < this.height;
-        if (hover) {
-            g.fill(2, py - 2, sw - 2, this.height - 2, RetroUi.HOVER_BG);
-        }
-        AccountApi.Account a = AccountManager.INSTANCE.account();
-        String nick = a == null ? "?" : a.nick();
-        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, 6, py + 1, 16);
-        g.drawString(this.font, FeedUtil.clip(this.font, nick, sw - 34), 26, py, RetroUi.FG, false);
-        g.drawString(this.font, FeedUtil.clip(this.font, "@" + (a == null ? "?" : a.tag()), sw - 34), 26, py + 10, RetroUi.GRAY, false);
-    }
-
-    private void drawItem(GuiGraphics g, Item it, int y, int mouseX, int mouseY, int sw) {
-        boolean hover = it.action() != null && mouseX >= 0 && mouseX < sw && mouseY >= y - 2 && mouseY < y + SB_ROW - 2;
-        if (it.active() || hover) {
-            g.fill(4, y - 2, sw - 4, y + SB_ROW - 3, RetroUi.HOVER_BG);
-        }
-        if (it.active()) {
-            g.fill(4, y - 2, 6, y + SB_ROW - 3, RetroUi.ACCENT);
-        }
-        int badgeW = it.badge() == null ? 0 : this.font.width(it.badge()) + 6;
-        String label = FeedUtil.clip(this.font, it.label(), sw - 18 - badgeW);
-        int color = (it.active() || hover) && it.color() == RetroUi.FG ? RetroUi.STRONG : it.color();
-        g.drawString(this.font, label, 10, y + 1, color, false);
-        if (it.badge() != null) {
-            int bx = sw - 8 - badgeW;
-            g.fill(bx, y - 1, bx + badgeW, y + 10, it.badgeColor());
-            g.drawString(this.font, it.badge(), bx + 3, y + 1, RetroUi.BG, false);
-        }
-    }
-
     private void renderProfileHeader(GuiGraphics g, int mouseX, int mouseY) {
         int x = contentLeft();
-        int right = backButton != null ? backButton.getX() - 6 : this.width - 8;
-        if (profile == null) {
-            g.drawString(this.font, tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : ""), x, TITLE_Y, RetroUi.GRAY, false);
-            return;
-        }
-        String t = FeedUtil.clip(this.font, profile.nick(), Math.max(20, right - x));
-        g.drawString(this.font, t, x, TITLE_Y, ownProfile() ? RetroUi.ACCENT : RetroUi.FG, false);
-        String handle = "\u00b7 @" + profile.tag();
-        int hx = x + this.font.width(t) + 4;
-        if (hx + this.font.width(handle) < right) {
-            g.drawString(this.font, handle, hx, TITLE_Y, RetroUi.GRAY, false);
-        }
-
-        int tx = x;
-        List<String[]> chips = new ArrayList<>();
-        chips.add(new String[]{tr("feed.profile.posts", profile.posts()), "fg"});
-        chips.add(new String[]{tr("feed.profile.reactions", profile.reactions()), "fg"});
-        if (profile.gg() > 0) {
-            chips.add(new String[]{"[GG] " + profile.gg(), "gg"});
-        }
-        if (profile.solved() > 0) {
-            chips.add(new String[]{tr("feed.profile.solved", profile.solved()), "gg"});
-        }
-        if (profile.moderator()) {
-            chips.add(new String[]{tr("feed.profile.mod"), "mod"});
-        }
-        if (profile.discord()) {
-            chips.add(new String[]{"Discord \u2713", "gray"});
-        }
-        for (String[] c : chips) {
-            int color = switch (c[1]) {
-                case "gg" -> PostType.GG.accent();
-                case "mod" -> RetroUi.CYAN;
-                case "gray" -> RetroUi.GRAY;
-                default -> RetroUi.FG;
-            };
-            int cw = RetroUi.chipWidth(this.font, c[0]);
-            if (tx + cw > this.width - 8) {
-                break;
-            }
-            RetroUi.drawChip(g, this.font, c[0], tx, TABS_Y, color, false);
-            tx += cw + TAB_GAP;
-        }
-
         int w = contentWidth();
         boolean own = ownProfile();
-        boolean hover = own && mouseX >= x && mouseX < x + w && mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H;
-        RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
-        drawAvatar(g, FeedApiClient.avatarKey(profile.id(), profile.avatar()), profile.nick(), x + 4, COMPOSE_Y + 4, 12);
-        String info = Component.translatable("feed.account.profile.since", AccountUi.date(profile.createdAt())).getString()
-                + " \u00b7 " + tr("feed.profile.comments", profile.comments());
-        String settings = own ? tr("feed.profile.settings") : null;
-        int sw = settings == null ? 0 : this.font.width(settings) + 8;
-        g.drawString(this.font, FeedUtil.clip(this.font, info, w - 30 - sw), x + 22, COMPOSE_Y + 6, RetroUi.GRAY, false);
-        if (settings != null) {
-            g.drawString(this.font, settings, x + w - 6 - this.font.width(settings), COMPOSE_Y + 6,
-                    hover ? RetroUi.ACCENT : RetroUi.FG, false);
+        int right = backButton != null && backButton.visible ? backButton.getX() - 6 : x + w;
+        drawTitle(g, own ? tr("feed.nav.profile") : tr("feed.profile.player"), null, x, TITLE_Y, right);
+        int y = PROFILE_CARD_Y;
+        if (profile == null) {
+            g.drawString(this.font, tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : ""), x + 8, y + 8, RetroUi.GRAY, false);
+            return;
+        }
+        int size = 40;
+        g.fill(x + 8, y + 8, x + 8 + size, y + 8 + size, RetroUi.SHADOW);
+        RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(profile.id(), profile.avatar()), profile.nick(), x + 6, y + 6, size);
+        g.renderOutline(x + 6, y + 6, size, size, RetroUi.GRAY);
+        int tx = x + 54;
+        int nameRight = settingsButton != null && settingsButton.visible ? settingsButton.getX() - 6 : x + w - 6;
+        String nick = FeedUtil.clip(this.font, profile.nick(), Math.max(10, (nameRight - tx) / 2));
+        g.pose().pushPose();
+        g.pose().translate(tx, y + 8, 0);
+        g.pose().scale(2f, 2f, 1f);
+        g.drawString(this.font, nick, 0, 0, own ? RetroUi.ACCENT : RetroUi.FG, false);
+        g.pose().popPose();
+        String handle = "@" + profile.tag();
+        g.drawString(this.font, handle, tx, y + 28, RetroUi.ACCENT, false);
+        if (profile.discord()) {
+            String prot = " " + tr("feed.profile.protected");
+            int px = tx + this.font.width(handle);
+            if (px + this.font.width(prot) < x + w - 6) {
+                g.drawString(this.font, prot, px, y + 28, AccountUi.GREEN, false);
+            }
+        }
+        List<String> parts = new ArrayList<>();
+        parts.add(tr("feed.profile.posts", profile.posts()));
+        parts.add(tr("feed.profile.reactions", profile.reactions()));
+        if (profile.solved() > 0) {
+            parts.add(tr("feed.profile.solved", profile.solved()));
+        }
+        parts.add(Component.translatable("feed.account.profile.since", AccountUi.date(profile.createdAt())).getString());
+        String stats = String.join(" \u00b7 ", parts);
+        g.drawString(this.font, FeedUtil.clip(this.font, stats, x + w - 6 - tx), tx, y + 39, RetroUi.GRAY, false);
+        if (profile.moderator()) {
+            String mod = tr("feed.profile.mod");
+            int cw = RetroUi.chipWidth(this.font, mod);
+            if (settingsButton == null || !settingsButton.visible) {
+                RetroUi.drawChip(g, this.font, mod, x + w - 6 - cw, y + 6, RetroUi.CYAN, false);
+            }
         }
     }
 
@@ -624,38 +487,33 @@ public class FeedScreen extends RetroScreen {
             return;
         }
         int x = contentLeft();
+        int w = contentWidth();
         CommunityApi.Community c = community();
-        String title;
-        String sub;
+        int right = manageButton != null && manageButton.visible ? manageButton.getX() - 6 : x + w;
         if (c == null) {
-            title = tr("feed.space.global");
-            sub = tr("feed.space.global_sub");
+            drawTitle(g, tr("feed.space.global"), tr("feed.space.global_sub"), x, TITLE_Y, right);
         } else {
-            title = c.name();
-            sub = Component.translatable("feed.space.members", c.members()).getString();
-        }
-        int right = manageButton != null && manageButton.visible ? manageButton.getX() - 6 : this.width - 8;
-        String t = FeedUtil.clip(this.font, title, Math.max(20, right - x));
-        g.drawString(this.font, t, x, TITLE_Y, RetroUi.FG, false);
-        int sx = x + this.font.width(t) + 4;
-        if (sx + this.font.width("\u00b7 " + sub) < right) {
-            g.drawString(this.font, "\u00b7 " + sub, sx, TITLE_Y, RetroUi.GRAY, false);
+            PixelIcon.draw(g, c.isOwner() ? "crown" : "lock", x, TITLE_Y, RetroUi.ACCENT);
+            drawTitle(g, c.name(), Component.translatable("feed.space.members", c.members()).getString()
+                    + " \u00b7 " + tr("feed.space.closed"), x + 10, TITLE_Y, right);
         }
 
         int tx = x;
         for (Tab tab : tabs()) {
-            RetroUi.drawChip(g, this.font, tab.label(), tx, TABS_Y, tab.color(), tab.active());
-            tx += RetroUi.chipWidth(this.font, tab.label()) + TAB_GAP;
+            int cw = RetroUi.chipWidth(this.font, tab.label());
+            boolean hover = !tab.active() && mouseX >= tx && mouseX < tx + cw && mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H;
+            RetroUi.drawChip(g, this.font, tab.label(), tx, TABS_Y, hover ? RetroUi.FG : tab.color(), tab.active());
+            tx += cw + TAB_GAP;
         }
 
-        int w = contentWidth();
         boolean hover = mouseX >= x && mouseX < x + w && mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H;
         RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
         AccountApi.Account a = AccountManager.INSTANCE.account();
         String nick = a == null ? "?" : a.nick();
-        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, x + 4, COMPOSE_Y + 4, 12);
+        RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, x + 4, COMPOSE_Y + 3, 16);
         String hint = Component.translatable("feed.compose.bar", nick).getString();
-        g.drawString(this.font, FeedUtil.clip(this.font, hint, w - 30), x + 22, COMPOSE_Y + 6, hover ? RetroUi.FG : RetroUi.GRAY, false);
+        g.drawString(this.font, FeedUtil.clip(this.font, hint, w - 44), x + 25, COMPOSE_Y + 8, hover ? RetroUi.FG : RetroUi.GRAY, false);
+        PixelIcon.draw(g, "img", x + w - 13, COMPOSE_Y + 8, hover ? RetroUi.FG : RetroUi.GRAY);
     }
 
     private List<Tab> tabs() {
@@ -669,19 +527,25 @@ public class FeedScreen extends RetroScreen {
     }
 
     private void renderList(GuiGraphics g, int mouseX, int mouseY) {
-        int top = LIST_TOP;
+        int top = listTop();
         int bottom = listBottom();
         int cx = contentLeft();
-        int mid = cx + contentWidth() / 2;
-        g.enableScissor(sidebarW() + 1, top, this.width, bottom);
+        int w = contentWidth();
+        int mid = cx + w / 2;
+        g.enableScissor(sidebarW(), top, this.width, bottom);
+        boolean inList = mouseY >= top && mouseY < bottom;
 
+        int endY = top - scroll;
         for (Row row : rows) {
             int y = top + row.y() - scroll;
-            if (y + row.height() >= top && y <= bottom) {
-                boolean hovered = mouseX >= cx && mouseX < cx + contentWidth()
-                        && mouseY >= Math.max(y, top) && mouseY < Math.min(y + row.height(), bottom);
-                drawCard(g, row, cx, y, hovered);
+            endY = y + row.height() + CARD_GAP;
+            if (y + row.height() + RetroUi.SHADOW_OFFSET >= top && y <= bottom) {
+                boolean hovered = inList && mouseX >= cx && mouseX < cx + w && mouseY >= y && mouseY < y + row.height();
+                PostCard.draw(g, this.font, row.layout(), cx, y, hovered, inList, mouseX, mouseY, null);
             }
+        }
+        if (!rows.isEmpty() && nextCursor == null && !loading) {
+            g.drawCenteredString(this.font, tr("feed.screen.feed.end"), mid, endY + 2, RetroUi.GRAY);
         }
 
         if (rows.isEmpty() && !loading && error == null) {
@@ -698,15 +562,15 @@ public class FeedScreen extends RetroScreen {
                 key = "feed.screen.feed.empty";
             }
             if (key != null) {
-                g.drawCenteredString(this.font, Component.translatable(key), mid, top + 20, RetroUi.GRAY);
+                g.drawCenteredString(this.font, Component.translatable(key), mid, top + 12, RetroUi.GRAY);
             }
         }
         if (loading) {
             String load = tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : " ");
-            g.drawCenteredString(this.font, load, mid, bottom - 14, RetroUi.GRAY);
+            g.drawCenteredString(this.font, load, mid, bottom - 12, RetroUi.GRAY);
         }
         if (error != null) {
-            g.drawCenteredString(this.font, error, mid, bottom - 14, RetroUi.ERROR);
+            g.drawCenteredString(this.font, error, mid, bottom - 12, RetroUi.ERROR);
         }
         g.disableScissor();
 
@@ -717,84 +581,11 @@ public class FeedScreen extends RetroScreen {
             boolean hover = mouseX >= lx && mouseX < lx + lw && mouseY >= top + 2 && mouseY < top + 2 + RetroUi.CHIP_H;
             RetroUi.drawChip(g, this.font, label, lx, top + 2, RetroUi.ACCENT, !hover);
         }
-
-        int viewport = bottom - top;
-        if (contentHeight > viewport) {
-            int barH = Math.max(12, viewport * viewport / contentHeight);
-            int barY = top + (viewport - barH) * scroll / Math.max(1, contentHeight - viewport);
-            g.fill(this.width - 4, barY, this.width - 2, barY + barH, RetroUi.GRAY);
-        }
+        drawScrollbar(g, top, bottom, scroll, contentHeight);
     }
 
     private String newAboveLabel() {
         return Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
-    }
-
-    private void drawAvatar(GuiGraphics g, String key, String name, int x, int y, int size) {
-        ResourceLocation avatar = AvatarCache.get(key);
-        if (avatar != null) {
-            g.blit(avatar, x, y, 0, 0, size, size, size, size);
-        } else {
-            g.fill(x, y, x + size, y + size, RetroUi.GRAY);
-            String letter = name == null || name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
-            g.drawString(this.font, letter, x + (size - this.font.width(letter)) / 2 + 1, y + (size - 8) / 2, RetroUi.BG, false);
-        }
-    }
-
-    private static final int CARD_IMAGE_H = 140;
-
-    private static int[] imageSize(Post post, int textW) {
-        return ImageBox.fit(post.imageW, post.imageH, textW, CARD_IMAGE_H);
-    }
-
-    private void drawCard(GuiGraphics g, Row row, int x, int y, boolean hovered) {
-        Post post = row.post();
-        PostType type = post.postType();
-        int w = contentWidth();
-        RetroUi.drawBox(g, x, y, w, row.height(), hovered);
-        int fg = RetroUi.FG;
-        int gray = RetroUi.GRAY;
-
-        int ax = x + PAD;
-        int ay = y + PAD;
-        drawAvatar(g, FeedApiClient.avatarKey(post.uuid, post.avatar), displayAuthor(post), ax, ay, 16);
-        g.renderOutline(ax, ay, 16, 16, fg);
-
-        int nx = ax + 22;
-        boolean own = FeedApiClient.isMine(post.uuid);
-        String chip = post.displayPrefix();
-        int chipW = RetroUi.chipWidth(this.font, chip);
-        String shownName = FeedUtil.clip(this.font, displayAuthor(post), w - PAD * 2 - 22 - chipW - 6);
-        g.drawString(this.font, shownName, nx, ay, own ? RetroUi.ACCENT : fg, false);
-        String handle = post.fromDiscord ? "Discord" : (post.authorTag != null ? "@" + post.authorTag : "");
-        int hx = nx + this.font.width(shownName) + 4;
-        if (!handle.isEmpty() && hx + this.font.width(handle) < x + w - PAD - chipW - 6) {
-            g.drawString(this.font, handle, hx, ay, gray, false);
-        }
-        g.drawString(this.font, FeedTime.ago(post.createdAt), nx, ay + 9, gray, false);
-        RetroUi.drawChip(g, this.font, chip, x + w - PAD - chipW, ay + 1, post.prefixColor(), false);
-
-        int lineY = y + PAD + 16 + 6;
-        for (String line : row.lines()) {
-            g.drawString(this.font, line, x + PAD, lineY, fg, false);
-            lineY += this.font.lineHeight + 3;
-        }
-        if (post.imageUrl != null) {
-            int[] s = imageSize(post, w - PAD * 2);
-            ImageBox.draw(g, this.font, post.imageUrl, x + PAD, lineY + 3, s[0], s[1]);
-        }
-
-        int cardBg = hovered ? RetroUi.HOVER_BG : RetroUi.BG;
-        int by = y + row.height() - PAD - RetroUi.CHIP_H;
-        int rx = x + PAD;
-        for (String key : type.reactions()) {
-            int count = post.reactionCount(key);
-            EmojiIcon icon = EmojiIcon.byKey(key);
-            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by, type.accent(), post.mine(key), cardBg);
-            rx += RetroUi.reactionChipWidth(this.font, icon, String.valueOf(count)) + TAB_GAP;
-        }
-        String cc = "\u270e " + post.commentCount;
-        g.drawString(this.font, cc, x + w - PAD - this.font.width(cc), by + 2, gray, false);
     }
 
     // ---------- input ----------
@@ -804,19 +595,12 @@ public class FeedScreen extends RetroScreen {
         if (super.mouseScrolled(mouseX, mouseY, dx, dy)) {
             return true;
         }
-        if (mouseX < sidebarW()) {
-            int listTop = communitiesTop() + 12;
-            int total = communityItems().size() * SB_ROW;
-            int max = Math.max(0, total - (sidebarBottom() - listTop));
-            sbScroll = Math.max(0, Math.min(max, sbScroll - (int) (dy * SB_ROW)));
-            return true;
-        }
         scroll -= (int) (dy * SCROLL_STEP);
         if (scroll <= SCROLL_STEP) {
             pendingNewAbove = 0;
         }
         clampScroll();
-        int viewport = listBottom() - LIST_TOP;
+        int viewport = listBottom() - listTop();
         if (!loading && nextCursor != null && scroll >= contentHeight - viewport - LOAD_MORE_THRESHOLD) {
             requestPage(nextCursor);
         }
@@ -831,96 +615,49 @@ public class FeedScreen extends RetroScreen {
         if (button != 0) {
             return false;
         }
-        if (mouseX < sidebarW()) {
-            return clickSidebar(mouseY);
-        }
-
         int x = contentLeft();
-        if (profileKey != null && mouseY >= TABS_Y && mouseY < COMPOSE_Y + COMPOSE_H) {
-            if (ownProfile() && mouseY >= COMPOSE_Y && mouseX >= x && mouseX < x + contentWidth()) {
-                this.minecraft.setScreen(new ProfileScreen(this));
-            }
-            return true;
-        }
-        if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
-            int tx = x;
-            for (Tab tab : tabs()) {
-                int w = RetroUi.chipWidth(this.font, tab.label());
-                if (mouseX >= tx && mouseX < tx + w) {
-                    if (tab.mine()) {
-                        mineOnly = !mineOnly;
-                        filter = null;
-                        refresh();
-                    } else {
-                        setFilter(tab.type());
+        int w = contentWidth();
+        if (profileKey == null) {
+            if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
+                int tx = x;
+                for (Tab tab : tabs()) {
+                    int cw = RetroUi.chipWidth(this.font, tab.label());
+                    if (mouseX >= tx && mouseX < tx + cw) {
+                        if (tab.mine()) {
+                            mineOnly = !mineOnly;
+                            filter = null;
+                            refresh();
+                        } else {
+                            setFilter(tab.type());
+                        }
+                        return true;
                     }
-                    return true;
+                    tx += cw + TAB_GAP;
                 }
-                tx += w + TAB_GAP;
             }
-        }
-        if (mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H && mouseX >= x && mouseX < x + contentWidth()) {
-            this.minecraft.setScreen(new ComposeScreen(this));
-            return true;
+            if (mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H && mouseX >= x && mouseX < x + w) {
+                this.minecraft.setScreen(new ComposeScreen(this));
+                return true;
+            }
         }
 
-        int top = LIST_TOP;
+        int top = listTop();
         if (pendingNewAbove > 0) {
             int lw = RetroUi.chipWidth(this.font, newAboveLabel());
-            int lx = x + contentWidth() / 2 - lw / 2;
+            int lx = x + w / 2 - lw / 2;
             if (mouseX >= lx && mouseX < lx + lw && mouseY >= top + 2 && mouseY < top + 2 + RetroUi.CHIP_H) {
                 scroll = 0;
                 pendingNewAbove = 0;
                 return true;
             }
         }
-        if (mouseY >= top && mouseY < listBottom()) {
+        if (mouseY >= top && mouseY < listBottom() && mouseX >= x && mouseX < x + w) {
             for (Row row : rows) {
                 int y = top + row.y() - scroll;
-                if (mouseY < y || mouseY >= y + row.height()) {
-                    continue;
+                if (mouseY >= y && mouseY < y + row.height()) {
+                    return clickInsideCard(row, x, y, mouseX, mouseY);
                 }
-                if (mouseX < x || mouseX >= x + contentWidth()) {
-                    break;
-                }
-                return clickInsideCard(row, x, y, mouseX, mouseY);
             }
-        }
-        return false;
-    }
-
-    private boolean clickSidebar(double mouseY) {
-        int y = SB_TOP;
-        for (Item it : topItems()) {
-            if (mouseY >= y - 2 && mouseY < y + SB_ROW - 2) {
-                if (it.action() != null) {
-                    it.action().run();
-                }
-                return true;
-            }
-            y += SB_ROW;
-        }
-        int listTop = communitiesTop() + 12;
-        int bottom = sidebarBottom();
-        if (mouseY >= listTop && mouseY < bottom) {
-            y = listTop - sbScroll;
-            for (Item it : communityItems()) {
-                if (mouseY >= y - 2 && mouseY < y + SB_ROW - 2) {
-                    if (it.action() != null) {
-                        it.action().run();
-                    }
-                    return true;
-                }
-                y += SB_ROW;
-            }
-        }
-        if (updateLabel() != null && UpdateChecker.downloadUrl() != null && mouseY >= bottom + 2 && mouseY < bottom + 2 + RetroUi.CHIP_H) {
-            ConfirmLinkScreen.confirmLinkNow(this, UpdateChecker.downloadUrl());
-            return true;
-        }
-        if (mouseY >= this.height - 28) {
-            openProfile(ownId());
-            return true;
         }
         return false;
     }
@@ -939,53 +676,18 @@ public class FeedScreen extends RetroScreen {
 
     private boolean clickInsideCard(Row row, int x, int y, double mouseX, double mouseY) {
         Post post = row.post();
-        int ay = y + PAD;
-        int nameEnd = x + PAD + 22 + this.font.width(displayAuthor(post));
-        if (!post.fromDiscord && post.uuid != null && mouseY >= ay && mouseY < ay + 18
-                && mouseX >= x + PAD && mouseX < Math.min(nameEnd, x + contentWidth() - 40)) {
-            openProfile(post.uuid);
-            return true;
+        PostCard.Hit hit = PostCard.hit(this.font, row.layout(), x, y, mouseX, mouseY);
+        switch (hit.kind()) {
+            case AUTHOR, MENTION -> openProfile(hit.value());
+            case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
+            case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+            default -> this.minecraft.setScreen(new PostScreen(this, post));
         }
-        int by = y + row.height() - PAD - RetroUi.CHIP_H;
-        if (mouseY >= by && mouseY < by + RetroUi.CHIP_H) {
-            int rx = x + PAD;
-            for (String key : post.postType().reactions()) {
-                int count = post.reactionCount(key);
-                int w = RetroUi.reactionChipWidth(this.font, EmojiIcon.byKey(key), String.valueOf(count));
-                if (mouseX >= rx && mouseX < rx + w) {
-                    ReactionHelper.toggle(post, key, null);
-                    return true;
-                }
-                rx += w + TAB_GAP;
-            }
-        }
-        this.minecraft.setScreen(new PostScreen(this, post));
         return true;
     }
 
-    private static String displayAuthor(Post post) {
-        return post.author == null || post.author.isEmpty() ? "?" : post.author;
-    }
-
     private void clampScroll() {
-        int viewport = listBottom() - LIST_TOP;
+        int viewport = listBottom() - listTop();
         scroll = Math.max(0, Math.min(scroll, Math.max(0, contentHeight - viewport)));
-    }
-
-    private String tr(String key) {
-        return Component.translatable(key).getString();
-    }
-
-    private static String tr(String key, Object... args) {
-        return Component.translatable(key, args).getString();
-    }
-
-    /** Null when no update notice should be shown. */
-    private String updateLabel() {
-        return switch (UpdateChecker.state()) {
-            case UPDATE_AVAILABLE -> Component.translatable("feed.update.chip", UpdateChecker.latest()).getString();
-            case OUTDATED -> Component.translatable("feed.update.chip_outdated").getString();
-            default -> null;
-        };
     }
 }

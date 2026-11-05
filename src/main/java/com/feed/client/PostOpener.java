@@ -13,11 +13,16 @@ public final class PostOpener {
 
     /** Notification click: the post, or the community for join/application notifications. */
     public static void open(Minecraft mc, FeedScreen parent, FeedApiClient.Notif n) {
+        open(mc, parent, n, null);
+    }
+
+    /** back: the page to return to from the post (e.g. the notifications page), null = the feed. */
+    public static void open(Minecraft mc, FeedScreen parent, FeedApiClient.Notif n, net.minecraft.client.gui.screens.Screen back) {
         if (n == null) {
             return;
         }
         if (n.postId() != null && !n.postId().isEmpty()) {
-            open(mc, parent, n.postId());
+            open(mc, parent, n.postId(), back);
             return;
         }
         NotificationPoller.markNotifRead(n.id());
@@ -36,6 +41,10 @@ public final class PostOpener {
     }
 
     public static void open(Minecraft mc, FeedScreen parent, String postId) {
+        open(mc, parent, postId, null);
+    }
+
+    public static void open(Minecraft mc, FeedScreen parent, String postId, net.minecraft.client.gui.screens.Screen back) {
         if (postId == null || postId.isEmpty()) {
             return;
         }
@@ -52,7 +61,7 @@ public final class PostOpener {
                     }
                     NotificationPoller.markRead(postId);
                     FeedScreen feed = parent != null ? parent : new FeedScreen();
-                    mc.setScreen(new PostScreen(feed, post));
+                    mc.setScreen(new PostScreen(feed, post).backTo(back));
                 }));
     }
 }

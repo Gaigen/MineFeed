@@ -44,9 +44,10 @@ public final class FeedApiClient {
 
     public record Notif(String id, String postId, String postText,
                           String author, String text, String createdAt,
-                          String kind, String communityId, String communityName) {
+                          String kind, String communityId, String communityName,
+                          String actorId, String actorTag, String avatar, boolean unread) {
         public Notif(String id, String postId, String postText, String author, String text, String createdAt) {
-            this(id, postId, postText, author, text, createdAt, null, null, null);
+            this(id, postId, postText, author, text, createdAt, null, null, null, null, null, null, false);
         }
     }
 
@@ -345,7 +346,9 @@ public final class FeedApiClient {
                 }
                 list.add(new Notif(String.valueOf(id), str(n, "postId"), postText,
                         actorName(actor), text, iso(n.get("updatedAt").getAsLong()),
-                        kind, str(n, "communityId"), community));
+                        kind, str(n, "communityId"), community,
+                        actor == null ? null : str(actor, "id"), actor == null ? null : str(actor, "tag"),
+                        actor == null ? null : str(actor, "avatar"), bool(n, "unread")));
             }
             return new NotificationsResult(list, latest > 0 ? String.valueOf(latest) : null);
         });

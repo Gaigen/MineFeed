@@ -1,5 +1,6 @@
 // In-mod notifications. Reactions fold into one row per post so they never spam.
 import { HttpError } from "./util.js";
+import { keyOf } from "./avatars.js";
 
 const QUOTE = 80;
 const PAGE = 30;
@@ -63,7 +64,10 @@ function out(r, seenAt) {
     commentId: r.comment_id,
     communityId: r.community_id || null,
     communityName: r.community_name || null,
-    actor: r.actor_id ? { id: r.actor_id, tag: r.a_tag || null, nick: r.a_nick || r.actor_name } : { discord: true, nick: r.actor_name },
+    actor: r.actor_id
+      ? { id: r.actor_id, tag: r.a_tag || null, nick: r.a_nick || r.actor_name,
+          avatar: keyOf({ avatar: r.a_avatar, skin: r.a_skin, discord_id: r.a_discord_id, discord_avatar: r.a_discord_avatar }) }
+      : { discord: true, nick: r.actor_name },
     count: r.count,
     text: r.text,
     postText: r.post_text == null ? null : quote(r.post_text),
@@ -73,7 +77,8 @@ function out(r, seenAt) {
   };
 }
 
-const SELECT = `SELECT n.*, a.tag AS a_tag, a.nick AS a_nick, substr(p.text, 1, ${QUOTE}) AS post_text
+const SELECT = `SELECT n.*, a.tag AS a_tag, a.nick AS a_nick, a.avatar AS a_avatar, a.skin AS a_skin,
+    a.discord_id AS a_discord_id, a.discord_avatar AS a_discord_avatar, substr(p.text, 1, ${QUOTE}) AS post_text
   , cm.name AS community_name
   FROM notifications n LEFT JOIN accounts a ON a.id = n.actor_id LEFT JOIN posts p ON p.id = n.post_id
   LEFT JOIN communities cm ON cm.id = n.community_id`;

@@ -1,18 +1,17 @@
 package com.feed.client.screen;
 
-import com.feed.client.AvatarCache;
+import com.feed.client.CommunityApi;
 import com.feed.client.FeedApiClient;
 import com.feed.client.FeedTime;
+import com.feed.client.FeedUtil;
 import com.feed.client.NotificationPoller;
 import com.feed.client.ReactionHelper;
 import com.feed.data.Comment;
 import com.feed.data.Post;
 import com.feed.data.PostType;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
@@ -22,26 +21,22 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Single post with comment thread and reply box. */
+/** One post page inside the shell: the card, its comments and a reply line at the bottom. */
 @OnlyIn(Dist.CLIENT)
-public class PostScreen extends RetroScreen {
+public class PostScreen extends ShellScreen {
 
-    private static final int TOP = 30;
-    private static final int PAD = 8;
-    private static final int CARD_GAP = 10;
-    private static final int INPUT_H = 20;
-    private static final int SCROLL_STEP = 18;
+    private static final int TOP = 26;
+    private static final int BTN_H = 13;
+    private static final int INPUT_H = 18;
     private static final int MAX_COMMENT = 300;
-    private static final int LOAD_OLDER_H = 14;
+    private static final int OLDER_H = 14;
+    private static final int COMMENT_LINE = 10;
     private static final long LIVE_POLL_MS = 30_000L;
 
-    private final FeedScreen parent;
     private final Post post;
-
     private final List<Comment> comments = new ArrayList<>();
     private final List<Row> rows = new ArrayList<>();
-    private List<String> postLines = List.of();
-    private int postHeight;
+    private PostCard.Layout card;
 
     private boolean requested;
     private boolean loading;
@@ -49,62 +44,98 @@ public class PostScreen extends RetroScreen {
     private boolean livePolling;
     private long lastLivePoll;
     private Component error;
+    private int errorColor = RetroUi.ERROR;
 
-    private String nextBefore = null;
-    private boolean loadingOlder = false;
-    private int loadOlderY = Integer.MIN_VALUE;
+    private String nextBefore;
+    private boolean loadingOlder;
 
     private EditBox input;
-    private RetroButton sendButton;
     private RetroButton solveButton;
     private RetroButton deleteButton;
     private RetroButton reportButton;
 
     private int scroll;
     private int contentHeight;
+    /** y of the "КОММЕНТАРИИ" header inside the scrolled content. */
+    private int commentsY;
 
-    private record Row(Comment comment, List<String> lines, int y, int height) {}
+    private record Row(Comment comment, List<String> lines, int y, int height, int imgW, int imgH) {}
+
+    /** Where "← Назад" leads: the feed, or the page the post was opened from (notifications). */
+    private net.minecraft.client.gui.screens.Screen back;
 
     public PostScreen(FeedScreen parent, Post post) {
-        super(Component.translatable("feed.screen.post.title"));
-        this.parent = parent;
+        super(Component.translatable("feed.screen.post.title"), parent);
         this.post = post;
+    }
+
+    public PostScreen backTo(net.minecraft.client.gui.screens.Screen screen) {
+        this.back = screen;
+        return this;
+    }
+
+    @Override
+    public void onClose() {
+        if (back != null) {
+            this.minecraft.setScreen(back);
+        } else {
+            super.onClose();
+        }
+    }
+
+    @Override
+    protected String navId() {
+        return post.space == null || "global".equals(post.space) ? "feed" : "c:" + post.space;
+    }
+
+    private String spaceName() {
+        if (post.space == null || "global".equals(post.space)) {
+            return tr("feed.space.global");
+        }
+        CommunityApi.Community c = CommunityApi.cachedById(post.space);
+        return c != null ? c.name() : null;
     }
 
     @Override
     protected void init() {
         NotificationPoller.markRead(post.id);
-
-        addRenderableWidget(new RetroButton(8, 6, 56, 18,
-                Component.translatable("feed.screen.post.back"), b -> onClose()));
-
-        if (post.postType() == PostType.HELP && isOwn() && !post.solved) {
-            solveButton = addRenderableWidget(new RetroButton(this.width - 110, 6, 102, 18,
-                    Component.translatable("feed.screen.post.solve"), b -> solve()));
-        }
-
-        if (isOwn()) {
-            deleteButton = addRenderableWidget(new RetroButton(this.width - 168, 6, 52, 18,
-                    Component.translatable("feed.screen.post.delete"), b -> deletePost()));
-        } else {
-            reportButton = addRenderableWidget(new RetroButton(this.width - 184, 6, 68, 18,
-                    Component.translatable("feed.screen.post.report"), b -> reportPost()));
-        }
-
         int x = contentLeft();
         int w = contentWidth();
-        input = new EditBox(this.font, x + 5, inputTop() + 6, w - 74, this.font.lineHeight + 2,
+        Component back = Component.translatable("feed.screen.post.back");
+        addRenderableWidget(new RetroButton(x, 5, this.font.width(back) + 12, BTN_H, back, b -> onClose()));
+
+        int right = x + w;
+        if (isOwn()) {
+            Component del = Component.translatable("feed.screen.post.delete");
+            int dw = this.font.width(del) + 12;
+            right -= dw;
+            deleteButton = addRenderableWidget(new RetroButton(right, 5, dw, BTN_H, del, b -> confirmDelete()));
+            right -= 4;
+            if (post.postType() == PostType.HELP && !post.solved) {
+                Component solve = Component.translatable("feed.screen.post.solve");
+                int sw = this.font.width(solve) + 12;
+                right -= sw;
+                solveButton = addRenderableWidget(new RetroButton(right, 5, sw, BTN_H, solve, b -> solve())
+                        .color(PostType.GG.accent()));
+            }
+        } else {
+            Component rep = Component.translatable("feed.screen.post.report");
+            int rw = this.font.width(rep) + 12;
+            reportButton = addRenderableWidget(new RetroButton(right - rw, 5, rw, BTN_H, rep, b -> reportPost()));
+        }
+
+        String keep = input != null ? input.getValue() : "";
+        input = new EditBox(this.font, x + 6, inputTop() + 5, w - 12, this.font.lineHeight + 1,
                 Component.translatable("feed.screen.post.placeholder"));
         input.setMaxLength(MAX_COMMENT);
         input.setBordered(false);
         input.setTextColor(RetroUi.FG);
         input.setTextColorUneditable(RetroUi.GRAY);
         input.setHint(Component.translatable("feed.screen.post.placeholder").withColor(RetroUi.GRAY & 0xFFFFFF));
+        input.setValue(keep);
         input.setResponder(s -> error = null);
+        input.visible = !post.solved;
         addRenderableWidget(input);
-        sendButton = addRenderableWidget(new RetroButton(x + w - 62, inputTop(), 62, INPUT_H,
-                Component.translatable("feed.screen.post.send"), b -> send()));
-        applySolvedState();
 
         relayout();
         if (!requested) {
@@ -116,14 +147,7 @@ public class PostScreen extends RetroScreen {
         return FeedApiClient.isMine(post.uuid);
     }
 
-    private void applySolvedState() {
-        boolean closed = post.solved;
-        input.visible = !closed;
-        sendButton.visible = !closed;
-        if (closed && solveButton != null) {
-            solveButton.visible = false;
-        }
-    }
+    // ---------- loading ----------
 
     private void refreshComments() {
         requested = true;
@@ -134,7 +158,7 @@ public class PostScreen extends RetroScreen {
                 this.minecraft.execute(() -> {
                     loading = false;
                     if (ex != null) {
-                        error = FeedApiClient.unwrap(ex).userMessage();
+                        showError(FeedApiClient.unwrap(ex).userMessage());
                         return;
                     }
                     comments.clear();
@@ -142,10 +166,8 @@ public class PostScreen extends RetroScreen {
                         comments.addAll(page.comments());
                     }
                     nextBefore = page.nextBefore();
-                    post.commentCount = comments.size();
+                    post.commentCount = Math.max(comments.size(), nextBefore != null ? post.commentCount : 0);
                     relayout();
-                    scroll = Integer.MAX_VALUE;
-                    clampScroll();
                 }));
     }
 
@@ -160,21 +182,13 @@ public class PostScreen extends RetroScreen {
             return;
         }
         lastLivePoll = now;
-        pollLiveComments();
-    }
-
-    private void pollLiveComments() {
         livePolling = true;
         FeedApiClient.INSTANCE.fetchCommentsIfCached(post.id).whenComplete((page, ex) ->
                 this.minecraft.execute(() -> {
                     livePolling = false;
-                    if (ex != null || page == null || page.notModified()) {
-                        return;
+                    if (ex == null && page != null && !page.notModified() && page.comments() != null) {
+                        mergeNewComments(page.comments());
                     }
-                    if (page.comments() == null) {
-                        return;
-                    }
-                    mergeNewComments(page.comments());
                 }));
     }
 
@@ -185,29 +199,26 @@ public class PostScreen extends RetroScreen {
                 known.add(c.id);
             }
         }
-        List<Comment> added = new ArrayList<>();
+        boolean added = false;
         for (Comment c : page) {
             if (c.id != null && known.add(c.id)) {
-                added.add(c);
+                comments.add(c);
+                added = true;
             }
         }
-        if (added.isEmpty()) {
+        if (!added) {
             return;
         }
-        boolean stickBottom = isNearBottom();
-        comments.addAll(added);
+        boolean stick = isNearBottom();
         post.commentCount = Math.max(post.commentCount, comments.size());
         relayout();
-        if (stickBottom) {
-            scroll = Integer.MAX_VALUE;
-            clampScroll();
+        if (stick) {
+            scrollToBottom();
         }
     }
 
     private boolean isNearBottom() {
-        int viewport = Math.max(1, listBottom() - TOP);
-        int max = Math.max(0, contentHeight - viewport);
-        return scroll >= max - SCROLL_STEP * 2;
+        return scroll >= maxScroll() - SCROLL_STEP * 2;
     }
 
     private void loadOlder() {
@@ -218,14 +229,16 @@ public class PostScreen extends RetroScreen {
                     if (ex != null || page == null) {
                         return;
                     }
-                    int added = heightOf(page.comments());
+                    int before = contentHeight;
                     comments.addAll(0, page.comments());
                     nextBefore = page.nextBefore();
                     relayout();
-                    scroll += added;
+                    scroll += contentHeight - before;
                     clampScroll();
                 }));
     }
+
+    // ---------- actions ----------
 
     private void send() {
         if (sending || post.solved) {
@@ -236,25 +249,19 @@ public class PostScreen extends RetroScreen {
             return;
         }
         sending = true;
-        sendButton.active = false;
         error = null;
         FeedApiClient.INSTANCE.createComment(post.id, text).whenComplete((comment, ex) ->
                 this.minecraft.execute(() -> {
-                    try {
-                        if (ex != null) {
-                            error = FeedApiClient.unwrap(ex).userMessage();
-                            return;
-                        }
-                        comments.add(comment);
-                        post.commentCount = comments.size();
-                        input.setValue("");
-                        relayout();
-                        scroll = Integer.MAX_VALUE;
-                        clampScroll();
-                    } finally {
-                        sending = false;
-                        sendButton.active = !post.solved;
+                    sending = false;
+                    if (ex != null) {
+                        showError(FeedApiClient.unwrap(ex).userMessage());
+                        return;
                     }
+                    comments.add(comment);
+                    post.commentCount = Math.max(post.commentCount + 1, comments.size());
+                    input.setValue("");
+                    relayout();
+                    scrollToBottom();
                 }));
     }
 
@@ -264,311 +271,213 @@ public class PostScreen extends RetroScreen {
                 this.minecraft.execute(() -> {
                     if (ex != null) {
                         solveButton.active = true;
-                        error = FeedApiClient.unwrap(ex).userMessage();
+                        showError(FeedApiClient.unwrap(ex).userMessage());
                         return;
                     }
-                    error = null;
                     post.solved = true;
-                    applySolvedState();
+                    solveButton.visible = false;
+                    input.visible = false;
+                    relayout();
                 }));
     }
 
-    private void deletePost() {
-        if (deleteButton != null) {
+    private void confirmDelete() {
+        this.minecraft.setScreen(new RetroConfirmScreen(this,
+                Component.translatable("feed.screen.post.delete_title"),
+                Component.translatable("feed.screen.post.delete_confirm"),
+                Component.translatable("feed.screen.post.delete"), true, () -> {
+            this.minecraft.setScreen(this);
             deleteButton.active = false;
-        }
-        FeedApiClient.INSTANCE.deletePost(post.id).whenComplete((v, ex) ->
-                this.minecraft.execute(() -> {
-                    if (ex != null) {
-                        if (deleteButton != null) {
+            FeedApiClient.INSTANCE.deletePost(post.id).whenComplete((v, ex) ->
+                    this.minecraft.execute(() -> {
+                        if (ex != null) {
                             deleteButton.active = true;
+                            showError(FeedApiClient.unwrap(ex).userMessage());
+                            return;
                         }
-                        error = FeedApiClient.unwrap(ex).userMessage();
-                        return;
-                    }
-                    onClose();
-                }));
+                        home().refresh();
+                        onClose();
+                    }));
+        }));
     }
 
     private void reportPost() {
-        if (reportButton != null) {
-            reportButton.active = false;
-        }
+        reportButton.active = false;
         FeedApiClient.INSTANCE.report(post.id, null, null).whenComplete((v, ex) ->
                 this.minecraft.execute(() -> {
-                    if (reportButton != null) {
-                        reportButton.active = true;
-                    }
                     if (ex != null) {
-                        error = FeedApiClient.unwrap(ex).userMessage();
+                        reportButton.active = true;
+                        showError(FeedApiClient.unwrap(ex).userMessage());
                     } else {
                         error = Component.translatable("feed.screen.post.reported");
+                        errorColor = AccountUi.GREEN;
                     }
                 }));
     }
 
-    private void relayout() {
-        int textW = contentWidth() - PAD * 2;
-        int headerH = Math.max(AvatarCache.BODY_H, 16);
-        postLines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
-        int lineStep = this.font.lineHeight + 3;
-        postHeight = PAD + headerH + 6 + postLines.size() * lineStep
-                + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
-        if (post.imageUrl != null) {
-            postHeight += postImageSize()[1] + 6;
-        }
+    private void showError(Component c) {
+        error = c;
+        errorColor = RetroUi.ERROR;
+    }
 
-        rows.clear();
-        int y = postHeight + CARD_GAP;
+    // ---------- layout ----------
+
+    private int commentTextW() {
+        return contentWidth() - 30;
+    }
+
+    private void relayout() {
+        int w = contentWidth();
+        card = PostCard.layout(this.font, post, w, this.height, true);
+        int y = card.h() + 10;
+        commentsY = y;
+        y += 13;
         if (nextBefore != null) {
-            y += LOAD_OLDER_H;
+            y += OLDER_H;
         }
+        rows.clear();
         for (Comment c : comments) {
-            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
-            int h = 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4;
+            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", commentTextW());
+            int iw = 0;
+            int ih = 0;
+            int h = 10 + lines.size() * COMMENT_LINE;
             if (c.imageUrl != null) {
-                h += commentImageSize(c)[1] + 4;
+                int[] s = ImageBox.fit(c.imageW, c.imageH, Math.min(200, commentTextW()), 90);
+                iw = s[0];
+                ih = s[1];
+                h += ih + 4;
             }
-            rows.add(new Row(c, lines, y, h));
+            h = Math.max(h, 18);
+            rows.add(new Row(c, lines, y, h, iw, ih));
             y += h + 6;
+        }
+        if (comments.isEmpty()) {
+            y += 14;
         }
         contentHeight = y;
         clampScroll();
     }
 
-    private void openProfile(String key) {
-        parent.openProfile(key);
-        this.minecraft.setScreen(parent);
+    private int inputTop() {
+        return this.height - 24;
     }
 
-    /** "@tag." at the end of a sentence: drop trailing dots. */
-    private static String trimMention(String seg) {
-        String t = seg.substring(1);
-        while (t.endsWith(".")) {
-            t = t.substring(0, t.length() - 1);
-        }
-        return t.toLowerCase();
+    private int listBottom() {
+        return inputTop() - 6;
     }
 
-    /** Skin or name of the post author, and @mentions in the post text. */
-    private boolean clickPostHeader(double mouseX, double mouseY) {
-        int y = TOP - scroll;
-        int ax = contentLeft() + PAD;
-        int ay = y + PAD;
-        if (mouseY < Math.max(TOP, ay) || mouseY >= listBottom()) {
-            return false;
-        }
-        int nameX = ax + AvatarCache.BODY_W + PAD + RetroUi.chipWidth(this.font, post.displayPrefix()) + 5;
-        boolean onSkin = mouseX >= ax && mouseX < ax + AvatarCache.BODY_W && mouseY < ay + AvatarCache.BODY_H;
-        boolean onName = mouseX >= nameX && mouseX < nameX + this.font.width(displayAuthor()) && mouseY >= ay + 2 && mouseY < ay + 14;
-        if ((onSkin || onName) && !post.fromDiscord && post.uuid != null) {
-            openProfile(post.uuid);
-            return true;
-        }
-        int lineY = ay + Math.max(AvatarCache.BODY_H, 16) + 6;
-        int step = this.font.lineHeight + 3;
-        int index = (int) Math.floor((mouseY - lineY) / step);
-        if (mouseY >= lineY && index >= 0 && index < postLines.size()) {
-            int lx = ax;
-            for (TagText.Seg seg : TagText.segments(postLines.get(index))) {
-                int w = this.font.width(seg.text());
-                if (mouseX >= lx && mouseX < lx + w) {
-                    if (seg.tag()) {
-                        openProfile(trimMention(seg.text()));
-                        return true;
-                    }
-                    break;
-                }
-                lx += w;
-            }
-        }
-        return false;
+    private int maxScroll() {
+        return Math.max(0, contentHeight - (listBottom() - TOP));
     }
 
-    private static final int POST_IMAGE_H = 220;
-    private static final int COMMENT_IMAGE_H = 90;
-    /** Screen rect of the post picture in the last frame (x, y, w, h), for clicks. */
-    private int[] postImageRect;
-
-    private int[] postImageSize() {
-        return ImageBox.fit(post.imageW, post.imageH, contentWidth() - PAD * 2, POST_IMAGE_H);
+    private void clampScroll() {
+        scroll = Math.max(0, Math.min(scroll, maxScroll()));
     }
 
-    private int[] commentImageSize(Comment c) {
-        return ImageBox.fit(c.imageW, c.imageH, Math.min(200, contentWidth() - PAD * 2 - 8), COMMENT_IMAGE_H);
+    private void scrollToBottom() {
+        scroll = maxScroll();
     }
 
-    private int heightOf(List<Comment> list) {
-        int textW = contentWidth() - PAD * 2;
-        int h = 0;
-        for (Comment c : list) {
-            List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
-            h += 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4 + 6;
-            if (c.imageUrl != null) {
-                h += commentImageSize(c)[1] + 4;
-            }
-        }
-        return h;
-    }
+    // ---------- rendering ----------
 
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, this.width, this.height, RetroUi.BG);
-        if (!post.solved) {
-            RetroUi.drawBox(g, contentLeft(), inputTop(), contentWidth(), INPUT_H, false);
+        super.renderBackground(g, mouseX, mouseY, partialTick);
+        int x = contentLeft();
+        int w = contentWidth();
+        int y = inputTop();
+        if (post.solved) {
+            RetroUi.drawBox(g, x, y, w, INPUT_H, false);
+            g.drawString(this.font, tr("feed.screen.post.closed"), x + 6, y + 5, RetroUi.GRAY, false);
+        } else {
+            boolean focused = input != null && input.isFocused();
+            boolean hover = mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + INPUT_H;
+            RetroUi.drawBox(g, x, y, w, INPUT_H, hover && !focused);
+            if (focused) {
+                g.renderOutline(x, y, w, INPUT_H, RetroUi.ACCENT);
+            }
         }
-        g.fill(0, listBottom() + 2, this.width, listBottom() + 3, RetroUi.SHADOW);
     }
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         super.render(g, mouseX, mouseY, partialTick);
+        int x = contentLeft();
+        int w = contentWidth();
+        Component back = Component.translatable("feed.screen.post.back");
+        g.drawString(this.font, this.title, x + this.font.width(back) + 20, 8, RetroUi.FG, false);
 
-        String t = this.title.getString() + (RetroUi.blink() ? "_" : " ");
-        g.drawString(this.font, t, (this.width - this.font.width(t)) / 2, 11, RetroUi.FG, false);
-
+        int top = TOP;
         int bottom = listBottom();
-        g.enableScissor(0, TOP, this.width, bottom);
-        drawPostCard(g, contentLeft(), TOP - scroll);
+        boolean inList = mouseY >= top && mouseY < bottom;
+        g.enableScissor(sidebarW(), top, this.width, bottom);
+        int y0 = top - scroll;
+        boolean cardHover = false;
+        PostCard.draw(g, this.font, card, x, y0, cardHover, inList, mouseX, mouseY, spaceName());
 
+        int hy = y0 + commentsY;
+        g.drawString(this.font, Component.translatable("feed.screen.post.comments", post.commentCount), x, hy, RetroUi.GRAY, false);
         if (nextBefore != null) {
-            int rowY = TOP + postHeight + CARD_GAP - scroll;
-            String label = loadingOlder ? "..."
-                    : Component.translatable("feed.screen.post.load_older").getString();
-            int lw = this.font.width(label);
-            int lx = this.width / 2 - lw / 2;
-            boolean hover = mouseY >= rowY - 2 && mouseY <= rowY + 10
-                    && mouseX >= lx - 4 && mouseX <= lx + lw + 4;
-            if (hover) {
-                g.fill(lx - 4, rowY - 2, lx + lw + 4, rowY + 10, RetroUi.HOVER_BG);
-            }
-            g.drawString(this.font, label, lx, rowY, hover ? RetroUi.ACCENT : RetroUi.GRAY, false);
-            loadOlderY = rowY;
-        } else {
-            loadOlderY = Integer.MIN_VALUE;
+            int oy = hy + 13;
+            String label = loadingOlder ? "..." : tr("feed.screen.post.load_older");
+            boolean hover = inList && mouseY >= oy - 2 && mouseY < oy + 10 && mouseX >= x && mouseX < x + this.font.width(label) + 8;
+            g.drawString(this.font, label, x + 4, oy, hover ? RetroUi.ACCENT : RetroUi.GRAY, false);
         }
-
+        if (comments.isEmpty() && !loading) {
+            g.drawString(this.font, tr("feed.screen.post.empty"), x + 6, hy + 13, RetroUi.GRAY, false);
+        }
         for (Row row : rows) {
-            int cy = TOP + row.y() - scroll;
-            if (cy + row.height() >= TOP && cy <= bottom) {
-                drawComment(g, row, contentLeft(), cy);
+            int cy = y0 + row.y();
+            if (cy + row.height() >= top && cy <= bottom) {
+                drawComment(g, row, x, cy, inList ? mouseX : -1, inList ? mouseY : -1);
             }
-        }
-        if (!loading && comments.isEmpty() && error == null) {
-            int emptyY = TOP + postHeight + CARD_GAP + (nextBefore != null ? LOAD_OLDER_H : 0) + 6 - scroll;
-            g.drawCenteredString(this.font, Component.translatable("feed.screen.post.empty"),
-                    this.width / 2, emptyY, RetroUi.GRAY);
-        }
-        g.disableScissor();
-
-        if (post.solved) {
-            g.drawCenteredString(this.font, Component.translatable("feed.screen.post.closed"),
-                    this.width / 2, inputTop() + 6, RetroUi.GRAY);
         }
         if (loading) {
-            String load = Component.translatable("feed.screen.loading").getString()
-                    + (RetroUi.blinkFast() ? "_" : " ");
-            g.drawCenteredString(this.font, load, this.width / 2, bottom - 12, RetroUi.GRAY);
+            String load = tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : " ");
+            g.drawString(this.font, load, x + 6, hy + 13, RetroUi.GRAY, false);
         }
+        g.disableScissor();
+        drawScrollbar(g, top, bottom, scroll, contentHeight);
+
         if (error != null) {
-            g.drawCenteredString(this.font, error, this.width / 2, bottom - 12, RetroUi.ERROR);
+            String e = FeedUtil.clip(this.font, error.getString(), w - 12);
+            int ew = this.font.width(e) + 10;
+            int ey = bottom - 14;
+            g.fill(x + w - ew, ey, x + w, ey + 12, RetroUi.BG);
+            g.renderOutline(x + w - ew, ey, ew, 12, errorColor);
+            g.drawString(this.font, e, x + w - ew + 5, ey + 2, errorColor, false);
         }
     }
 
-    private void drawPostCard(GuiGraphics g, int x, int y) {
-        int w = contentWidth();
-        RetroUi.drawBox(g, x, y, w, postHeight, false);
-
-        PostType type = post.postType();
-        int ax = x + PAD;
-        int ay = y + PAD;
-        int skinW = AvatarCache.BODY_W;
-        int skinH = AvatarCache.BODY_H;
-        String avatarKey = FeedApiClient.avatarKey(post.uuid, post.avatar);
-        ResourceLocation skin = AvatarCache.get(avatarKey, AvatarCache.Kind.BODY);
-        if (skin != null && !AvatarCache.hasBody(avatarKey)) {
-            // a Discord picture: a square at the top of the body slot
-            g.blit(skin, ax, ay, 0, 0, skinW, skinW, skinW, skinW);
-            skinH = skinW;
-        } else if (skin != null) {
-            g.blit(skin, ax, ay, 0, 0, skinW, skinH, skinW, skinH);
-        } else {
-            g.fill(ax, ay, ax + skinW, ay + skinH, RetroUi.GRAY);
-            String letter = displayAuthor().substring(0, 1).toUpperCase();
-            g.drawString(this.font, letter, ax + (skinW - this.font.width(letter)) / 2,
-                    ay + skinH / 2 - 4, RetroUi.BG, false);
-        }
-        g.renderOutline(ax, ay, skinW, skinH, RetroUi.FG);
-
-        int nx = ax + skinW + PAD;
-        RetroUi.drawChip(g, this.font, post.displayPrefix(), nx, ay + 2, post.prefixColor(), false);
-        int tx = nx + RetroUi.chipWidth(this.font, post.displayPrefix()) + 5;
-        String name = displayAuthor();
-        g.drawString(this.font, name, tx, ay + 4, isOwn() ? RetroUi.ACCENT : RetroUi.FG, false);
-        String meta = "\u00b7 " + FeedTime.ago(post.createdAt);
-        g.drawString(this.font, meta, tx + this.font.width(name) + 4, ay + 4, RetroUi.GRAY, false);
-
-        int headerH = Math.max(AvatarCache.BODY_H, 16);
-        int lineY = y + PAD + headerH + 6;
-        for (String line : postLines) {
-            int lx = x + PAD;
-            for (TagText.Seg seg : TagText.segments(line)) {
-                g.drawString(this.font, seg.text(), lx, lineY,
-                        seg.tag() ? type.accent() : RetroUi.FG, false);
-                lx += this.font.width(seg.text());
-            }
-            lineY += this.font.lineHeight + 3;
-        }
-        if (post.imageUrl != null) {
-            int[] s = postImageSize();
-            ImageBox.draw(g, this.font, post.imageUrl, x + PAD, lineY + 3, s[0], s[1]);
-            postImageRect = new int[]{x + PAD, lineY + 3, s[0], s[1]};
-        } else {
-            postImageRect = null;
-        }
-
-        int by = y + postHeight - PAD - RetroUi.CHIP_H;
-        int rx = x + PAD;
-        for (String key : type.reactions()) {
-            int count = post.reactionCount(key);
-            EmojiIcon icon = EmojiIcon.byKey(key);
-            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by,
-                    type.accent(), post.mine(key), RetroUi.BG);
-            rx += RetroUi.reactionChipWidth(this.font, icon, String.valueOf(count)) + 6;
-        }
-        String cc = "\u270e " + post.commentCount;
-        g.drawString(this.font, cc, x + w - PAD - this.font.width(cc), by + 2, RetroUi.GRAY, false);
+    private String commentAuthor(Comment c) {
+        return c.author == null || c.author.isEmpty() ? "?" : c.author;
     }
 
-    private void drawComment(GuiGraphics g, Row row, int x, int y) {
+    private void drawComment(GuiGraphics g, Row row, int x, int y, int mouseX, int mouseY) {
         Comment c = row.comment();
-        g.fill(x, y, x + 2, y + row.height(), RetroUi.SHADOW);
-
-        boolean own = FeedApiClient.isMine(c.authorId);
-        int nameColor = own ? RetroUi.ACCENT : (c.fromMod ? RetroUi.FG : RetroUi.GRAY);
-        String author = c.author == null || c.author.isEmpty() ? "?" : c.author;
-        g.drawString(this.font, author, x + 8, y + 3, nameColor, false);
-        String meta = (c.fromMod ? "\u00b7 " : "\u00b7 "
-                + Component.translatable("feed.author.discord").getString() + " \u00b7 ")
-                + FeedTime.ago(c.createdAt);
-        g.drawString(this.font, meta, x + 8 + this.font.width(author) + 4, y + 3,
-                RetroUi.GRAY, false);
-
-        int ly = y + 3 + this.font.lineHeight + 3;
+        String name = commentAuthor(c);
+        RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(c.authorId, c.avatar), name, x + 4, y, 16);
+        boolean byAuthor = c.authorId != null && c.authorId.equals(post.uuid);
+        boolean nameHover = c.fromMod && c.authorId != null && mouseY >= y && mouseY < y + 9
+                && mouseX >= x + 4 && mouseX < x + 25 + this.font.width(name);
+        int nx = x + 25;
+        String shown = FeedUtil.clip(this.font, name, contentWidth() / 2);
+        g.drawString(this.font, shown, nx, y, byAuthor ? RetroUi.ACCENT : nameHover ? RetroUi.STRONG : RetroUi.FG, false);
+        nx += this.font.width(shown);
+        String meta = (c.fromMod ? (c.authorTag != null ? " @" + c.authorTag : "") : " \u00b7 " + tr("feed.author.discord"))
+                + " \u00b7 " + FeedTime.ago(c.createdAt);
+        g.drawString(this.font, FeedUtil.clip(this.font, meta, Math.max(10, x + contentWidth() - nx)), nx, y, RetroUi.GRAY, false);
+        int ly = y + 10;
         for (String line : row.lines()) {
-            int lx = x + 8;
-            for (TagText.Seg seg : TagText.segments(line)) {
-                g.drawString(this.font, seg.text(), lx, ly,
-                        seg.tag() ? RetroUi.ACCENT : RetroUi.FG, false);
-                lx += this.font.width(seg.text());
-            }
-            ly += this.font.lineHeight + 2;
+            PostCard.drawRich(g, this.font, line, x + 25, ly, RetroUi.FG);
+            ly += COMMENT_LINE;
         }
         if (c.imageUrl != null) {
-            int[] s = commentImageSize(c);
-            ImageBox.draw(g, this.font, c.imageUrl, x + 8, ly + 1, s[0], s[1]);
+            ImageBox.draw(g, this.font, c.imageUrl, x + 25, ly + 2, row.imgW(), row.imgH());
         }
     }
+
+    // ---------- input ----------
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {
@@ -588,108 +497,72 @@ public class PostScreen extends RetroScreen {
         if (button != 0) {
             return false;
         }
-
-        if (postImageRect != null && mouseX >= postImageRect[0] && mouseX < postImageRect[0] + postImageRect[2]
-                && mouseY >= Math.max(postImageRect[1], TOP) && mouseY < Math.min(postImageRect[1] + postImageRect[3], listBottom())) {
-            this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+        int x = contentLeft();
+        int w = contentWidth();
+        if (!post.solved && mouseY >= inputTop() && mouseY < inputTop() + INPUT_H && mouseX >= x && mouseX < x + w) {
+            setFocused(input);
+            input.setFocused(true);
             return true;
         }
-
-        if (clickPostHeader(mouseX, mouseY)) {
+        int top = TOP;
+        int bottom = listBottom();
+        if (mouseY < top || mouseY >= bottom || mouseX < x || mouseX >= x + w) {
+            return false;
+        }
+        int y0 = top - scroll;
+        if (mouseY < y0 + card.h()) {
+            PostCard.Hit hit = PostCard.hit(this.font, card, x, y0, mouseX, mouseY);
+            switch (hit.kind()) {
+                case AUTHOR, MENTION -> openPlayer(hit.value());
+                case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
+                case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+                default -> {
+                }
+            }
             return true;
         }
-
-        if (nextBefore != null && !loadingOlder && loadOlderY != Integer.MIN_VALUE
-                && mouseY >= loadOlderY - 2 && mouseY <= loadOlderY + 10) {
+        int oy = y0 + commentsY + 13;
+        if (nextBefore != null && !loadingOlder && mouseY >= oy - 2 && mouseY < oy + 10) {
             loadOlder();
             return true;
         }
-
-        int by = TOP - scroll + postHeight - PAD - RetroUi.CHIP_H;
-        if (mouseY >= Math.max(by, TOP) && mouseY < Math.min(by + RetroUi.CHIP_H, listBottom())) {
-            int rx = contentLeft() + PAD;
-            for (String key : post.postType().reactions()) {
-                int count = post.reactionCount(key);
-                int w = RetroUi.reactionChipWidth(this.font, EmojiIcon.byKey(key), String.valueOf(count));
-                if (mouseX >= rx && mouseX < rx + w) {
-                    ReactionHelper.toggle(post, key, null);
+        for (Row row : rows) {
+            int cy = y0 + row.y();
+            if (mouseY < cy || mouseY >= cy + row.height()) {
+                continue;
+            }
+            Comment c = row.comment();
+            if (c.fromMod && c.authorId != null && mouseY < cy + 9
+                    && mouseX >= x + 4 && mouseX < x + 25 + this.font.width(commentAuthor(c))) {
+                openPlayer(c.authorId);
+                return true;
+            }
+            int ly = cy + 10;
+            if (mouseY >= ly && mouseY < ly + row.lines().size() * COMMENT_LINE) {
+                String tag = PostCard.mentionAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX);
+                if (tag != null) {
+                    openPlayer(tag);
                     return true;
                 }
-                rx += w + 6;
             }
-        }
-
-        int top = listTop();
-        int bottom = listBottom();
-        if (mouseY >= top && mouseY < bottom) {
-            for (Row row : rows) {
-                int y = top + row.y() - scroll;
-                if (mouseY < y || mouseY >= y + row.height()) {
-                    continue;
-                }
-                Comment c = row.comment();
-                String cAuthor = c.author == null || c.author.isEmpty() ? "?" : c.author;
-                if (c.fromMod && c.authorId != null && mouseY >= y + 2 && mouseY < y + 3 + this.font.lineHeight
-                        && mouseX >= contentLeft() + 8 && mouseX < contentLeft() + 8 + this.font.width(cAuthor)) {
-                    openProfile(c.authorId);
+            if (c.imageUrl != null) {
+                int iy = ly + row.lines().size() * COMMENT_LINE + 2;
+                if (mouseY >= iy && mouseY < iy + row.imgH() && mouseX >= x + 25 && mouseX < x + 25 + row.imgW()) {
+                    this.minecraft.setScreen(new ImageViewScreen(this, c.imageUrl, c.imageW, c.imageH));
                     return true;
                 }
-                int bodyTop = y + 3 + this.font.lineHeight + 3;
-                int lineH = this.font.lineHeight + 2;
-                int index = (int) ((mouseY - bodyTop) / lineH);
-                if (mouseY >= bodyTop && index >= 0 && index < row.lines().size()) {
-                    int lx = contentLeft() + 8;
-                    for (TagText.Seg seg : TagText.segments(row.lines().get(index))) {
-                        int w = this.font.width(seg.text());
-                        if (mouseX >= lx && mouseX < lx + w) {
-                            if (seg.tag()) {
-                                openProfile(trimMention(seg.text()));
-                                return true;
-                            }
-                            break;
-                        }
-                        lx += w;
-                    }
-                }
-                break;
             }
+            break;
         }
         return false;
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)
-                && input.visible && input.isFocused()) {
+        if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && input.visible && input.isFocused()) {
             send();
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    private String displayAuthor() {
-        return post.author == null || post.author.isEmpty() ? "?" : post.author;
-    }
-
-    private void clampScroll() {
-        int viewport = listBottom() - TOP;
-        scroll = Math.max(0, Math.min(scroll, Math.max(0, contentHeight - viewport)));
-    }
-
-    private int inputTop() {
-        return this.height - 14 - INPUT_H;
-    }
-
-    private int listBottom() {
-        return inputTop() - 8;
-    }
-
-    private int listTop() {
-        return TOP;
-    }
-
-    @Override
-    public void onClose() {
-        this.minecraft.setScreen(parent);
     }
 }
