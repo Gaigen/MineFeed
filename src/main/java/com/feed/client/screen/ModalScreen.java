@@ -87,8 +87,11 @@ public abstract class ModalScreen extends RetroScreen {
             } catch (RuntimeException e) {
                 backdropFailed = true;
             }
-            // Text is batched until the end of the frame; draw the feed's text now, under the dialog.
+            // Text is batched until the end of the frame, and shadowed text sits slightly above z=0:
+            // draw the feed now and forget its depth, so the dialog covers it completely.
             g.flush();
+            com.mojang.blaze3d.systems.RenderSystem.clear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT,
+                    net.minecraft.client.Minecraft.ON_OSX);
         } else {
             g.fill(0, 0, this.width, this.height, RetroUi.BG);
         }
