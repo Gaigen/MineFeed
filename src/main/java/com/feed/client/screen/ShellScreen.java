@@ -90,6 +90,12 @@ public abstract class ShellScreen extends RetroScreen {
         showHome();
     }
 
+    /** Feed of the space filtered by #tag (tag without "#"). */
+    public void openHashtag(String space, String tag) {
+        home().openHashtag(space, tag);
+        showHome();
+    }
+
     private <T extends ModalScreen> void modal(T screen) {
         screen.from(this);
         this.minecraft.setScreen(screen);

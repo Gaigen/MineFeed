@@ -322,9 +322,9 @@
   "feed.theme.terminal.sub": "зелёный монитор",
   "feed.configuration.theme": "Тема оформления",
   "feed.nav.search": "Поиск",
-  "feed.search.title": "Поиск игроков",
-  "feed.search.hint": "ник или @тег",
-  "feed.search.start": "Начни вводить ник или @тег",
+  "feed.search.title": "Поиск",
+  "feed.search.hint": "ник, @тег или #хештег",
+  "feed.search.start": "Начни вводить ник, @тег или #хештег",
   "feed.search.empty": "Никого не нашлось",
   "feed.profile.back": "← Назад",
   "feed.profile.posts": "постов: %d",
@@ -503,5 +503,14 @@
   "feed.account.error.banned_until": "Аккаунт заблокирован до %s",
   "feed.account.error.banned_reason": "%s. Причина: %s",
   "feed.comment.ban": "бан…",
-  "feed.report.sent_title": "Жалоба отправлена"
+  "feed.report.sent_title": "Жалоба отправлена",
+  "feed.hashtag.sub": "%s",
+  "feed.hashtag.compose": "Написать пост с %s",
+  "feed.hashtag.empty": "Пока нет постов с %s",
+  "feed.search.empty_tags": "Таких хештегов пока нет",
+  "feed.search.popular": "Популярные теги · %s",
+  "feed.search.popular_empty": "Пока нет популярных хештегов. Добавь #тег в пост — по нему его найдут другие.",
+  "feed.search.tip": "Введи #слово, чтобы найти любой хештег",
+  "feed.search.tag_posts": "постов: %s",
+  "feed.compose.tag_tip": "Добавь #тег — пост будет проще найти"
 }

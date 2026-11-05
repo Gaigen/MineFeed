@@ -302,3 +302,46 @@ test("profiles, search and the author filter", async () => {
   assert.deepEqual(s2.data.users.map((u) => u.tag), ["alice"]);
   assert.deepEqual((await api("GET", "/v2/users?q=%25", { key: a.key })).data.users, []);
 });
+
+test("hashtags: parsing, tag feed, popular and prefix search", async () => {
+  const { extractTags, normalizeTag } = await import("../src/hashtags.js");
+  assert.deepEqual(extractTags("Убил дракона! #GG #Эндер, #ender_dragon #gg"), ["gg", "эндер", "ender_dragon"]);
+  assert.deepEqual(extractTags("C# и a#b и #1 и #x и https://x.ru/#frag и &#39;"), []);
+  assert.deepEqual(extractTags("#Ёлка"), ["елка"]);
+  assert.deepEqual(extractTags("#" + "a".repeat(33)), []);
+  assert.equal(extractTags(Array.from({ length: 15 }, (_, i) => "#t" + i + "x").join(" ")).length, 10);
+  assert.equal(normalizeTag("#Майн"), "майн");
+
+  const { api, user, env } = setup();
+  const a = await user("alice");
+  const b = await user("bob");
+  const p1 = (await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "first #Дракон #build" } })).data.post;
+  await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "second #дракон" }, now: T0 + 1000 });
+  await api("POST", "/v2/posts", { key: b.key, body: { type: "talk", text: "no tags" }, now: T0 + 2000 });
+  const f = await api("GET", "/v2/feed?tag=" + encodeURIComponent("#ДРАКОН"), { key: b.key, now: T0 + 3000 });
+  assert.deepEqual(f.data.posts.map((p) => p.text), ["second #дракон", "first #Дракон #build"]);
+  assert.equal((await api("GET", "/v2/feed?tag=x", { key: b.key })).status, 400);
+  let h = await api("GET", "/v2/hashtags", { key: b.key, now: T0 + 3000 });
+  assert.deepEqual(h.data.tags, [{ tag: "дракон", posts: 2 }, { tag: "build", posts: 1 }]);
+  h = await api("GET", "/v2/hashtags?q=" + encodeURIComponent("#др"), { key: b.key, now: T0 + 3000 });
+  assert.deepEqual(h.data.tags, [{ tag: "дракон", posts: 2 }]);
+  h = await api("GET", "/v2/hashtags?q=%25", { key: b.key });
+  assert.deepEqual(h.data.tags, []);
+  // old posts drop out of "popular", deleted posts are not counted
+  h = await api("GET", "/v2/hashtags", { key: b.key, now: T0 + 15 * 86_400_000 });
+  assert.deepEqual(h.data.tags, []);
+  await api("DELETE", "/v2/posts/" + p1.id, { key: a.key, now: T0 + 4000 });
+  h = await api("GET", "/v2/hashtags", { key: b.key, now: T0 + 5000 });
+  assert.deepEqual(h.data.tags, [{ tag: "дракон", posts: 1 }]);
+  // closed spaces: only members
+  assert.equal((await api("GET", "/v2/hashtags?space=nosuchspace", { key: b.key })).status >= 400, true);
+  // Discord: a new forum post and its edit are indexed
+  const auth = "Bearer bot-secret-0123456789";
+  const tid = String(seq++);
+  await api("POST", "/v2/bot/events", { auth, body: { events: [{ t: "MESSAGE_CREATE", d: { id: tid, channel_id: tid, parent_id: "900", thread_name: "Из дискорда", content: "смотрите #база", author: { id: "d-z", username: "z" } } }] }, now: T0 + 6000 });
+  assert.equal((await api("GET", "/v2/feed?tag=база", { key: b.key, now: T0 + 7000 })).data.posts.length, 1);
+  await api("POST", "/v2/bot/events", { auth, body: { events: [{ t: "MESSAGE_UPDATE", d: { id: tid, content: "смотрите #ферма", author: { id: "d-z", username: "z" } } }] }, now: T0 + 8000 });
+  assert.equal((await api("GET", "/v2/feed?tag=база", { key: b.key, now: T0 + 9000 })).data.posts.length, 0);
+  assert.equal((await api("GET", "/v2/feed?tag=ферма", { key: b.key, now: T0 + 9000 })).data.posts.length, 1);
+  assert.ok(env);
+});

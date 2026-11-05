@@ -7,6 +7,7 @@ import { TYPES, MAX_POST, markPostDeleted, markCommentDeleted } from "./feed.js"
 import * as N from "./notify.js";
 import * as C from "./communities.js";
 import { fromAttachments } from "./images.js";
+import { indexPost } from "./hashtags.js";
 
 const MAX_EVENTS = 100;
 const MAX_DISCORD_TEXT = 1000;
@@ -23,7 +24,7 @@ export function discordText(d) {
   const users = Object.fromEntries((d.mentions || []).map((u) => [u.id, u.global_name || u.username]));
   let t = String(d.content || "")
     .replace(/<@!?(\d+)>/g, (_, id) => "@" + (users[id] || "user"))
-    .replace(/<#(\d+)>/g, "#channel")
+    .replace(/<#(\d+)>/g, "[channel]")
     .replace(/<@&(\d+)>/g, "@role")
     .replace(/<a?:(\w+):\d+>/g, ":$1:")
     .replace(/<t:(\d+)(?::\w)?>/g, (_, s) => new Date(Number(s) * 1000).toISOString().slice(0, 16).replace("T", " "))
@@ -75,11 +76,13 @@ async function onMessage(env, d, ctx, now) {
     const applied = new Set(d.applied_tags || []);
     const type = TYPES.find((t) => applied.has(tagIds[t])) || "talk";
     const body = [d.thread_name, text].filter(Boolean).join("\n");
+    const postText = [...body].slice(0, MAX_POST).join("") || "…";
     const r = await env.DB.prepare(
       `INSERT OR IGNORE INTO posts (id, space, author_id, ext_name, ext_avatar, type, text, image, created_at, updated_at, solved)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(d.id, space.id, acc ? acc.id : null, acc ? null : displayName(d), extAvatar, type, [...body].slice(0, MAX_POST).join("") || "…",
+    ).bind(d.id, space.id, acc ? acc.id : null, acc ? null : displayName(d), extAvatar, type, postText,
       image, created, now, applied.has(tagIds.solved) ? 1 : 0).run();
+    if (r.meta.changes) await indexPost(env, d.id, space.id, postText, created);
     return r.meta.changes ? "post" : "dup";
   }
 
@@ -107,9 +110,13 @@ async function onEdit(env, d, ctx, now) {
   const c = await env.DB.prepare("UPDATE comments SET text = ?1, updated_at = ?2 WHERE id = ?3 AND deleted = 0 AND text <> ?1")
     .bind(text, now, String(d.id)).run();
   if (c.meta.changes) return "edit";
+  const postText = [...text].slice(0, MAX_POST).join("");
   const p = await env.DB.prepare("UPDATE posts SET text = ?1, updated_at = ?2 WHERE id = ?3 AND deleted = 0 AND author_id IS NULL AND text <> ?1")
-    .bind([...text].slice(0, MAX_POST).join(""), now, String(d.id)).run();
-  return p.meta.changes ? "edit" : "skip";
+    .bind(postText, now, String(d.id)).run();
+  if (!p.meta.changes) return "skip";
+  const row = await env.DB.prepare("SELECT space, created_at FROM posts WHERE id = ?").bind(String(d.id)).first();
+  if (row) await indexPost(env, String(d.id), row.space, postText, row.created_at);
+  return "edit";
 }
 
 async function onDelete(env, id, channelId, now) {

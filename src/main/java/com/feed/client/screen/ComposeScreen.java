@@ -12,6 +12,7 @@ import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /** Compose panel with type selector. Ctrl+Enter submits. */
@@ -21,7 +22,9 @@ public class ComposeScreen extends Screen {
     private static final int MAX = 500;
     private static final int INPUT_H = 80;
     private static final int ATTACH_H = 28;
-    private static final int PANEL_H = 24 + RetroUi.CHIP_H + 6 + INPUT_H + 8 + ATTACH_H + 8 + 18 + 24;
+    private static final int TAGS_H = 16;
+    private static final int MAX_TAG_CHIPS = 6;
+    private static final int PANEL_H = 24 + RetroUi.CHIP_H + 6 + INPUT_H + 4 + TAGS_H + ATTACH_H + 8 + 18 + 24;
 
     private final FeedScreen parent;
 
@@ -35,6 +38,9 @@ public class ComposeScreen extends Screen {
     private String draft;
     private RetroButton attachButton;
     private RetroButton removeButton;
+    /** Popular #tags of the space for one-click insert; null while loading. */
+    private List<FeedApiClient.HashtagCount> popularTags;
+    private boolean tagsRequested;
 
     public ComposeScreen(FeedScreen parent) {
         this(parent, PostType.TALK, null);
@@ -66,7 +72,13 @@ public class ComposeScreen extends Screen {
             input.setValue(prefill.length() > MAX ? prefill.substring(0, MAX) : prefill);
         }
 
-        int attachY = inputY + INPUT_H + 8;
+        if (!tagsRequested) {
+            tagsRequested = true;
+            FeedApiClient.INSTANCE.hashtags(parent.space(), null).whenComplete((list, ex) -> this.minecraft.execute(() ->
+                    popularTags = ex != null || list == null ? List.of() : list));
+        }
+
+        int attachY = inputY + INPUT_H + 4 + TAGS_H;
         attachButton = addRenderableWidget(new RetroButton(inputX, attachY + (ATTACH_H - 18) / 2, 100, 18,
                 Component.translatable("feed.compose.screenshot"), b -> pickScreenshot()));
         removeButton = addRenderableWidget(new RetroButton(inputX + inputW - 70, attachY + (ATTACH_H - 18) / 2, 70, 18,
@@ -180,6 +192,7 @@ public class ComposeScreen extends Screen {
                 }
                 cx += w + 6;
             }
+            return clickTagRow(mouseX, mouseY);
         }
         return false;
     }
@@ -230,7 +243,9 @@ public class ComposeScreen extends Screen {
         }
 
 
-        int attachY = y + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 8;
+        renderTagRow(g, x + 10, y + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 4, w - 20, mouseX, mouseY);
+
+        int attachY = y + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 4 + TAGS_H;
         if (attached != null) {
             PostImages.Tex t = PostImages.thumb(attached);
             int th = ATTACH_H - 2;
@@ -253,6 +268,84 @@ public class ComposeScreen extends Screen {
         } else if (status != null) {
             g.drawString(this.font, status, x + 10, statusY, RetroUi.ERROR, false);
         }
+    }
+
+    /** Chips of popular tags under the text (left of the character counter); a click adds the tag. */
+    private void renderTagRow(GuiGraphics g, int x, int y, int w, int mouseX, int mouseY) {
+        int limit = x + w - this.font.width("500/500") - 10;
+        List<FeedApiClient.HashtagCount> tags = visibleTags();
+        if (tags.isEmpty()) {
+            if (popularTags != null) {
+                String tip = Component.translatable("feed.compose.tag_tip").getString();
+                g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, tip, limit - x), x, y + 2, RetroUi.GRAY, false);
+            }
+            return;
+        }
+        int cx = x;
+        for (FeedApiClient.HashtagCount t : tags) {
+            String label = "#" + t.tag();
+            int cw = RetroUi.chipWidth(this.font, label);
+            if (cx + cw > limit) {
+                break;
+            }
+            boolean hover = mouseX >= cx && mouseX < cx + cw && mouseY >= y && mouseY < y + RetroUi.CHIP_H;
+            RetroUi.drawChip(g, this.font, label, cx, y, hover ? RetroUi.FG : RetroUi.CYAN, false);
+            cx += cw + 4;
+        }
+    }
+
+    /** Popular tags not yet in the text. */
+    private List<FeedApiClient.HashtagCount> visibleTags() {
+        if (popularTags == null || input == null) {
+            return List.of();
+        }
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (TagText.Seg seg : TagText.segments(input.getValue())) {
+            if (seg.kind() == TagText.Kind.HASHTAG) {
+                used.add(TagText.normalizeHashtag(seg.text()));
+            }
+        }
+        List<FeedApiClient.HashtagCount> out = new java.util.ArrayList<>();
+        for (FeedApiClient.HashtagCount t : popularTags) {
+            if (!used.contains(t.tag()) && out.size() < MAX_TAG_CHIPS) {
+                out.add(t);
+            }
+        }
+        return out;
+    }
+
+    private boolean clickTagRow(double mouseX, double mouseY) {
+        {
+            int x = panelLeft() + 10;
+            int y = panelTop() + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 4;
+            int limit = x + panelWidth() - 20 - this.font.width("500/500") - 10;
+            if (mouseY >= y && mouseY < y + RetroUi.CHIP_H) {
+                int cx = x;
+                for (FeedApiClient.HashtagCount t : visibleTags()) {
+                    int cw = RetroUi.chipWidth(this.font, "#" + t.tag());
+                    if (cx + cw > limit) {
+                        break;
+                    }
+                    if (mouseX >= cx && mouseX < cx + cw && !sending) {
+                        addTag(t.tag());
+                        return true;
+                    }
+                    cx += cw + 4;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void addTag(String tag) {
+        String v = input.getValue();
+        String add = (v.isEmpty() || Character.isWhitespace(v.charAt(v.length() - 1)) ? "" : " ") + "#" + tag + " ";
+        if (v.length() + add.length() > MAX) {
+            return;
+        }
+        input.setValue(v + add);
+        setFocused(input);
+        input.setFocused(true);
     }
 
     @Override

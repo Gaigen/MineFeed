@@ -322,9 +322,9 @@
   "feed.theme.terminal.sub": "green monitor",
   "feed.configuration.theme": "Color theme",
   "feed.nav.search": "Search",
-  "feed.search.title": "Find players",
-  "feed.search.hint": "nick or @tag",
-  "feed.search.start": "Start typing a nick or @tag",
+  "feed.search.title": "Search",
+  "feed.search.hint": "nick, @tag or #hashtag",
+  "feed.search.start": "Start typing a nick, @tag or #hashtag",
   "feed.search.empty": "Nobody found",
   "feed.profile.back": "← Back",
   "feed.profile.posts": "posts: %d",
@@ -503,5 +503,14 @@
   "feed.account.error.banned_until": "Your account is blocked until %s",
   "feed.account.error.banned_reason": "%s. Reason: %s",
   "feed.comment.ban": "ban…",
-  "feed.report.sent_title": "Report sent"
+  "feed.report.sent_title": "Report sent",
+  "feed.hashtag.sub": "%s",
+  "feed.hashtag.compose": "Write a post with %s",
+  "feed.hashtag.empty": "No posts with %s yet",
+  "feed.search.empty_tags": "No such hashtags yet",
+  "feed.search.popular": "Popular tags · %s",
+  "feed.search.popular_empty": "No popular hashtags yet. Add a #tag to your post so others can find it.",
+  "feed.search.tip": "Type #word to find any hashtag",
+  "feed.search.tag_posts": "posts: %s",
+  "feed.compose.tag_tip": "Add a #tag so the post is easier to find"
 }

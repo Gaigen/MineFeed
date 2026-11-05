@@ -5,6 +5,7 @@ import { rateLimit } from "./accounts.js";
 import { dapi, webhookName } from "./dapi.js";
 import * as N from "./notify.js";
 import { parseUpload, freshen } from "./images.js";
+import * as H from "./hashtags.js";
 import { closeReports, modLog } from "./modlog.js";
 
 export const TYPES = ["rip", "help", "gg", "talk"];
@@ -205,6 +206,8 @@ export async function feed(env, account, q, now) {
   const binds = [space.id];
   if (TYPES.includes(type)) { where.push("p.type = ?"); binds.push(type); }
   if (type === "mine") { where.push("p.author_id = ?"); binds.push(account.id); }
+  const hashtag = H.feedTag(q.get("tag"));
+  if (hashtag) { where.push("p.id IN (SELECT post_id FROM post_tags WHERE tag = ? AND space = ?)"); binds.push(hashtag, space.id); }
   const authorId = q.get("author");
   if (authorId && /^[0-9a-f-]{36}$/.test(authorId)) { where.push("p.author_id = ?"); binds.push(authorId); }
   const before = parseCursor(q.get("before"));
@@ -309,6 +312,7 @@ export async function createPost(env, account, body, now) {
   await env.DB.prepare(
     "INSERT INTO posts (id, space, author_id, type, text, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).bind(id, space.id, account.id, body.type, text, image, now, now).run();
+  await H.indexPost(env, id, space.id, text, now);
   await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
   return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
 }

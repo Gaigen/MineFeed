@@ -22,7 +22,7 @@ public final class PostCard {
     private static final int TEXT_TOP = 28;
     private static final int FOOTER = 18;
 
-    public enum Kind { CARD, AUTHOR, MENTION, REACTION, IMAGE, COMMENTS }
+    public enum Kind { CARD, AUTHOR, MENTION, HASHTAG, REACTION, IMAGE, COMMENTS }
 
     public record Hit(Kind kind, String value) {}
 
@@ -102,7 +102,7 @@ public final class PostCard {
 
         int ly = y + TEXT_TOP;
         for (String line : l.lines()) {
-            drawRich(g, font, line, x + PAD, ly, RetroUi.FG);
+            drawRich(g, font, line, x + PAD, ly, RetroUi.FG, interactive ? mouseX : -1, mouseY);
             ly += LINE;
         }
         if (post.imageUrl != null) {
@@ -137,24 +137,49 @@ public final class PostCard {
         g.drawString(font, cc, rx + 13, by + 2, RetroUi.GRAY, false);
     }
 
-    /** Text with @mentions in the accent color. */
+    /** Text with @mentions in the accent color and #hashtags in cyan. */
     public static void drawRich(GuiGraphics g, Font font, String line, int x, int y, int color) {
+        drawRich(g, font, line, x, y, color, -1, -1);
+    }
+
+    /** Same, underlining the link under the mouse. */
+    public static void drawRich(GuiGraphics g, Font font, String line, int x, int y, int color, int mouseX, int mouseY) {
+        boolean row = mouseY >= y - 1 && mouseY < y + 10;
         for (TagText.Seg seg : TagText.segments(line)) {
-            g.drawString(font, seg.text(), x, y, seg.tag() ? RetroUi.ACCENT : color, false);
-            x += font.width(seg.text());
+            int c = switch (seg.kind()) {
+                case MENTION -> RetroUi.ACCENT;
+                case HASHTAG -> RetroUi.CYAN;
+                default -> color;
+            };
+            int w = font.width(seg.text());
+            g.drawString(font, seg.text(), x, y, c, false);
+            if (seg.tag() && row && mouseX >= x && mouseX < x + w) {
+                g.fill(x, y + 9, x + w - 1, y + 10, c);
+            }
+            x += w;
         }
     }
 
-    /** @tag under the mouse in a wrapped line, or null. */
-    public static String mentionAt(Font font, String line, int x, double mouseX) {
+    /** Clickable thing under the mouse in a wrapped line: "@tag" (player) or "#tag" (hashtag), else null. */
+    public static String linkAt(Font font, String line, int x, double mouseX) {
         for (TagText.Seg seg : TagText.segments(line)) {
             int w = font.width(seg.text());
             if (mouseX >= x && mouseX < x + w) {
-                return seg.tag() ? trimMention(seg.text()) : null;
+                return switch (seg.kind()) {
+                    case MENTION -> "@" + trimMention(seg.text());
+                    case HASHTAG -> "#" + TagText.normalizeHashtag(seg.text());
+                    default -> null;
+                };
             }
             x += w;
         }
         return null;
+    }
+
+    /** @tag under the mouse in a wrapped line (without "@"), or null. */
+    public static String mentionAt(Font font, String line, int x, double mouseX) {
+        String link = linkAt(font, line, x, mouseX);
+        return link != null && link.startsWith("@") ? link.substring(1) : null;
     }
 
     /** "@tag." at the end of a sentence: drop trailing dots. */
@@ -176,9 +201,9 @@ public final class PostCard {
         int ly = y + TEXT_TOP;
         if (mouseY >= ly && mouseY < ly + l.lines().size() * LINE) {
             int index = (int) ((mouseY - ly) / LINE);
-            String tag = mentionAt(font, l.lines().get(index), x + PAD, mouseX);
-            if (tag != null) {
-                return new Hit(Kind.MENTION, tag);
+            String link = linkAt(font, l.lines().get(index), x + PAD, mouseX);
+            if (link != null) {
+                return link.startsWith("#") ? new Hit(Kind.HASHTAG, link.substring(1)) : new Hit(Kind.MENTION, link.substring(1));
             }
         }
         if (post.imageUrl != null) {

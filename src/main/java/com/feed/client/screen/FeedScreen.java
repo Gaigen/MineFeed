@@ -60,6 +60,8 @@ public class FeedScreen extends ShellScreen {
     /** Open player profile (account id or tag); null = the normal feed of {@link #space}. */
     private String profileKey;
     private FeedApiClient.Profile profile;
+    /** Normalized #hashtag filter of the feed (without "#"); null = all posts. */
+    private String hashtag;
 
     private RetroButton settingsButton;
     private RetroButton banButton;
@@ -76,9 +78,14 @@ public class FeedScreen extends ShellScreen {
         super(Component.translatable("feed.brand.title"), null);
     }
 
-    /** Hashtags are gone in v2; kept for old call sites. */
-    public FeedScreen(String ignoredTag) {
+    /** Opens the global feed filtered by #tag. */
+    public FeedScreen(String tag) {
         this();
+        this.hashtag = TagText.normalizeHashtag(tag);
+    }
+
+    public String hashtag() {
+        return hashtag;
     }
 
     public String space() {
@@ -115,7 +122,7 @@ public class FeedScreen extends ShellScreen {
         Component back = Component.translatable("feed.profile.back");
         int bw = this.font.width(back) + 12;
         backButton = addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - bw, 5, bw, BTN_H, back,
-                b -> closeProfile()));
+                b -> back()));
         Component settings = Component.translatable("feed.profile.settings");
         int sw = this.font.width(settings) + 12;
         settingsButton = addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - sw - 6, PROFILE_CARD_Y + 6,
@@ -138,9 +145,9 @@ public class FeedScreen extends ShellScreen {
             return;
         }
         CommunityApi.Community c = community();
-        manageButton.visible = c != null && profileKey == null;
+        manageButton.visible = c != null && profileKey == null && hashtag == null;
         if (backButton != null) {
-            backButton.visible = profileKey != null && !ownProfile();
+            backButton.visible = profileKey != null ? !ownProfile() : hashtag != null;
         }
         if (settingsButton != null) {
             settingsButton.visible = profileKey != null && ownProfile();
@@ -279,9 +286,36 @@ public class FeedScreen extends ShellScreen {
         refresh();
     }
 
+    private void back() {
+        if (profileKey != null) {
+            closeProfile();
+        } else if (hashtag != null) {
+            hashtag = null;
+            updateManageButton();
+            refresh();
+        }
+    }
+
+    /** Posts of the space with #tag; the "back" button returns to the whole feed. */
+    public void openHashtag(String newSpace, String tag) {
+        String t = TagText.normalizeHashtag(tag);
+        if (t == null) {
+            return;
+        }
+        profileKey = null;
+        profile = null;
+        space = newSpace == null ? "global" : newSpace;
+        hashtag = t;
+        filter = null;
+        mineOnly = false;
+        updateManageButton();
+        refresh();
+    }
+
     public void switchSpace(String newSpace) {
         profileKey = null;
         profile = null;
+        hashtag = null;
         String s = newSpace == null ? "global" : newSpace;
         if (!s.equals(space)) {
             space = s;
@@ -332,9 +366,10 @@ public class FeedScreen extends ShellScreen {
             return;
         }
         String forSpace = space;
-        FeedApiClient.INSTANCE.fetchFeed(forSpace, cursor, PAGE_SIZE, mineOnly, false)
+        String forTag = hashtag;
+        FeedApiClient.INSTANCE.fetchFeed(forSpace, forTag, cursor, PAGE_SIZE, mineOnly, false)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
-                    if (!forSpace.equals(space)) {
+                    if (!forSpace.equals(space) || !Objects.equals(forTag, hashtag) || profileKey != null) {
                         return; // switched meanwhile
                     }
                     loading = false;
@@ -361,10 +396,12 @@ public class FeedScreen extends ShellScreen {
     private void pollLiveFeed() {
         livePolling = true;
         String forSpace = space;
-        FeedApiClient.INSTANCE.fetchFeed(forSpace, null, PAGE_SIZE, mineOnly, true)
+        String forTag = hashtag;
+        FeedApiClient.INSTANCE.fetchFeed(forSpace, forTag, null, PAGE_SIZE, mineOnly, true)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
                     livePolling = false;
-                    if (!forSpace.equals(space) || ex != null || page == null || page.notModified()) {
+                    if (!forSpace.equals(space) || !Objects.equals(forTag, hashtag) || profileKey != null
+                            || ex != null || page == null || page.notModified()) {
                         return;
                     }
                     if (page.body() == null || page.body().posts == null) {
@@ -543,8 +580,13 @@ public class FeedScreen extends ShellScreen {
         int x = contentLeft();
         int w = contentWidth();
         CommunityApi.Community c = community();
-        int right = manageButton != null && manageButton.visible ? manageButton.getX() - 6 : x + w;
-        if (c == null) {
+        int right = manageButton != null && manageButton.visible ? manageButton.getX() - 6
+                : backButton != null && backButton.visible ? backButton.getX() - 6 : x + w;
+        if (hashtag != null) {
+            String where = c == null ? tr("feed.space.global") : c.name();
+            g.drawString(this.font, "#", x, TITLE_Y, RetroUi.CYAN, false);
+            drawTitle(g, hashtag, Component.translatable("feed.hashtag.sub", where).getString(), x + this.font.width("#"), TITLE_Y, right);
+        } else if (c == null) {
             drawTitle(g, tr("feed.space.global"), tr("feed.space.global_sub"), x, TITLE_Y, right);
         } else {
             PixelIcon.draw(g, c.isOwner() ? "crown" : "lock", x, TITLE_Y, RetroUi.ACCENT);
@@ -565,7 +607,8 @@ public class FeedScreen extends ShellScreen {
         AccountApi.Account a = AccountManager.INSTANCE.account();
         String nick = a == null ? "?" : a.nick();
         RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, x + 4, COMPOSE_Y + 3, 16);
-        String hint = Component.translatable("feed.compose.bar", nick).getString();
+        String hint = hashtag != null ? Component.translatable("feed.hashtag.compose", "#" + hashtag).getString()
+                : Component.translatable("feed.compose.bar", nick).getString();
         g.drawString(this.font, FeedUtil.clip(this.font, hint, w - 44), x + 25, COMPOSE_Y + 8, hover ? RetroUi.FG : RetroUi.GRAY, false);
         PixelIcon.draw(g, "img", x + w - 13, COMPOSE_Y + 8, hover ? RetroUi.FG : RetroUi.GRAY);
     }
@@ -608,6 +651,9 @@ public class FeedScreen extends ShellScreen {
                 key = profile == null ? null : "feed.profile.empty";
             } else if (mineOnly) {
                 key = "feed.screen.feed.empty.mine";
+            } else if (hashtag != null && filter == null) {
+                key = null;
+                RetroUi.centered(g, this.font, Component.translatable("feed.hashtag.empty", "#" + hashtag), mid, top + 12, RetroUi.GRAY);
             } else if (filter != null) {
                 key = filter.emptyKey();
             } else if (!"global".equals(space)) {
@@ -690,7 +736,9 @@ public class FeedScreen extends ShellScreen {
                 }
             }
             if (mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H && mouseX >= x && mouseX < x + w) {
-                this.minecraft.setScreen(new ComposeScreen(this));
+                this.minecraft.setScreen(hashtag != null
+                        ? new ComposeScreen(this, filter != null ? filter : PostType.TALK, "#" + hashtag + " ")
+                        : new ComposeScreen(this));
                 return true;
             }
         }
@@ -733,6 +781,7 @@ public class FeedScreen extends ShellScreen {
         PostCard.Hit hit = PostCard.hit(this.font, row.layout(), x, y, mouseX, mouseY);
         switch (hit.kind()) {
             case AUTHOR, MENTION -> openProfile(hit.value());
+            case HASHTAG -> openHashtag(space, hit.value());
             case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
             case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
             default -> this.minecraft.setScreen(new PostScreen(this, post));

@@ -105,30 +105,50 @@ public final class FeedApiClient {
 
     // ---------- feed ----------
 
-    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine) {
-        return fetchFeed("global", cursor, limit, mine, false);
-    }
-
-    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
-        return fetchFeed("global", cursor, limit, mine, fresh);
-    }
-
-    /** fresh = live poll of the first page: asks /v2/sync first and reloads only on changes. */
     public CompletableFuture<FeedPage> fetchFeed(String space, String cursor, int limit, boolean mine, boolean fresh) {
+        return fetchFeed(space, null, cursor, limit, mine, fresh);
+    }
+
+    /**
+     * One page of a space, optionally only posts with #hashtag.
+     * fresh = live poll of the first page: asks /v2/sync first and reloads only on changes.
+     */
+    public CompletableFuture<FeedPage> fetchFeed(String space, String hashtag, String cursor, int limit, boolean mine, boolean fresh) {
         String sp = space == null ? "global" : space;
+        String key = hashtag == null ? sp : sp + "#" + hashtag;
         boolean first = cursor == null || cursor.isEmpty();
-        Long since = feedSince.get(sp);
+        Long since = feedSince.get(key);
         if (fresh && first && since != null && since > 0) {
             return call("GET", "/v2/sync?space=" + sp + "&since=" + since, null).thenCompose(s -> {
                 boolean changed = bool(s, "reset") || s.getAsJsonArray("posts").size() > 0;
                 if (!changed) {
-                    feedSince.put(sp, s.get("now").getAsLong());
+                    feedSince.put(key, s.get("now").getAsLong());
                     return CompletableFuture.completedFuture(new FeedPage(null, true));
                 }
-                return loadFeed(sp, null, limit, mine);
+                return loadFeed(sp, hashtag, key, null, limit, mine);
             });
         }
-        return loadFeed(sp, cursor, limit, mine);
+        return loadFeed(sp, hashtag, key, cursor, limit, mine);
+    }
+
+    // ---------- hashtags ----------
+
+    public record HashtagCount(String tag, int posts) {}
+
+    /** Popular tags of the space (empty prefix) or tags starting with the prefix. */
+    public CompletableFuture<List<HashtagCount>> hashtags(String space, String prefix) {
+        StringBuilder path = new StringBuilder("/v2/hashtags?space=").append(space == null ? "global" : space);
+        if (prefix != null && !prefix.isEmpty()) {
+            path.append("&q=").append(java.net.URLEncoder.encode(prefix, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return call("GET", path.toString(), null).thenApply(o -> {
+            List<HashtagCount> list = new ArrayList<>();
+            for (JsonElement e : o.getAsJsonArray("tags")) {
+                JsonObject t = e.getAsJsonObject();
+                list.add(new HashtagCount(str(t, "tag"), t.get("posts").getAsInt()));
+            }
+            return list;
+        });
     }
 
     // ---------- players ----------
@@ -183,8 +203,11 @@ public final class FeedApiClient {
         });
     }
 
-    private CompletableFuture<FeedPage> loadFeed(String space, String cursor, int limit, boolean mine) {
+    private CompletableFuture<FeedPage> loadFeed(String space, String hashtag, String sinceKey, String cursor, int limit, boolean mine) {
         StringBuilder path = new StringBuilder("/v2/feed?space=").append(space).append("&limit=").append(limit);
+        if (hashtag != null) {
+            path.append("&tag=").append(java.net.URLEncoder.encode(hashtag, java.nio.charset.StandardCharsets.UTF_8));
+        }
         if (cursor != null && !cursor.isEmpty()) {
             path.append("&before=").append(cursor);
         }
@@ -194,7 +217,7 @@ public final class FeedApiClient {
         boolean first = cursor == null || cursor.isEmpty();
         return call("GET", path.toString(), null).thenApply(o -> {
             if (first) {
-                feedSince.put(space, o.get("now").getAsLong());
+                feedSince.put(sinceKey, o.get("now").getAsLong());
             }
             FeedResponse r = new FeedResponse();
             r.posts = new ArrayList<>();

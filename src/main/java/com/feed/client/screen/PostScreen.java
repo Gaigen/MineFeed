@@ -537,7 +537,7 @@ public class PostScreen extends ShellScreen {
         g.drawString(this.font, FeedUtil.clip(this.font, meta, Math.max(10, x + contentWidth() - nx)), nx, y, RetroUi.GRAY, false);
         int ly = y + 10;
         for (String line : row.lines()) {
-            PostCard.drawRich(g, this.font, line, x + 25, ly, RetroUi.FG);
+            PostCard.drawRich(g, this.font, line, x + 25, ly, RetroUi.FG, mouseX, mouseY);
             ly += COMMENT_LINE;
         }
         if (c.imageUrl != null) {
@@ -598,6 +598,7 @@ public class PostScreen extends ShellScreen {
             PostCard.Hit hit = PostCard.hit(this.font, card, x, y0, mouseX, mouseY);
             switch (hit.kind()) {
                 case AUTHOR, MENTION -> openPlayer(hit.value());
+                case HASHTAG -> openHashtag(post.space, hit.value());
                 case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
                 case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
                 default -> {
@@ -633,9 +634,13 @@ public class PostScreen extends ShellScreen {
             }
             int ly = cy + 10;
             if (mouseY >= ly && mouseY < ly + row.lines().size() * COMMENT_LINE) {
-                String tag = PostCard.mentionAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX);
-                if (tag != null) {
-                    openPlayer(tag);
+                String link = PostCard.linkAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX);
+                if (link != null) {
+                    if (link.startsWith("#")) {
+                        openHashtag(post.space, link.substring(1));
+                    } else {
+                        openPlayer(link.substring(1));
+                    }
                     return true;
                 }
             }

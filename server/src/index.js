@@ -10,6 +10,7 @@ import * as N from "./notify.js";
 import * as B from "./bot.js";
 import * as C from "./communities.js";
 import * as AP from "./applications.js";
+import * as H from "./hashtags.js";
 
 const API = 2;
 
@@ -81,11 +82,12 @@ export async function route(request, env, now) {
   // everything below needs an account
   if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
       || p.startsWith("/v2/notifications") || p === "/v2/reports" || p.startsWith("/v2/communities") || p === "/v2/join"
-      || p === "/v2/users" || p.startsWith("/v2/mod/") || /^\/v2\/users\/[^/]+\/ban$/.test(p)) {
+      || p === "/v2/users" || p === "/v2/hashtags" || p.startsWith("/v2/mod/") || /^\/v2\/users\/[^/]+\/ban$/.test(p)) {
     const account = await A.authenticate(request, env, now);
     const q = url.searchParams;
     if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
     if (p === "/v2/users" && m === "GET") return json(await U.search(env, q));
+    if (p === "/v2/hashtags" && m === "GET") return json(await H.list(env, await F.spaceFor(env, account, q.get("space")), q.get("q"), now));
     if (p === "/v2/sync" && m === "GET") return json(await F.sync(env, account, q, now));
     if (p === "/v2/posts" && m === "POST") return json(await F.createPost(env, account, await readJson(request, 2_100_000), now), 201);
     if (p === "/v2/reports" && m === "POST") return json(await M.report(env, account, await readJson(request), now));
