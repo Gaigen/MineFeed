@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 public final class TagText {
 
-    private static final Pattern TAG_PATTERN = Pattern.compile("#[\\p{L}\\p{N}_]+");
+    private static final Pattern TAG_PATTERN = Pattern.compile("@[A-Za-z0-9_.]{2,32}");
 
     public record Seg(String text, boolean tag) {}
 

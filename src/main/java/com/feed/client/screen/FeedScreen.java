@@ -65,6 +65,10 @@ public class FeedScreen extends RetroScreen {
     private int pendingNewAbove;
     private int sbScroll;
     private RetroButton manageButton;
+    private RetroButton backButton;
+    /** Open player profile (account id or tag); null = the normal feed of {@link #space}. */
+    private String profileKey;
+    private FeedApiClient.Profile profile;
 
     private record Row(Post post, List<String> lines, int y, int height) {}
 
@@ -113,6 +117,9 @@ public class FeedScreen extends RetroScreen {
                 this.minecraft.setScreen(new CommunityScreen(this, c));
             }
         }));
+        Component back = Component.translatable("feed.profile.back");
+        int bw = this.font.width(back) + 14;
+        backButton = addRenderableWidget(new RetroButton(this.width - 8 - bw, 5, bw, 14, back, b -> closeProfile()));
         updateManageButton();
 
         relayout();
@@ -129,7 +136,10 @@ public class FeedScreen extends RetroScreen {
             return;
         }
         CommunityApi.Community c = community();
-        manageButton.visible = c != null;
+        manageButton.visible = c != null && profileKey == null;
+        if (backButton != null) {
+            backButton.visible = profileKey != null;
+        }
         if (c != null) {
             Component label = Component.translatable(c.isMod() ? "feed.space.manage" : "feed.space.info");
             int w = this.font.width(label) + 14;
@@ -163,7 +173,7 @@ public class FeedScreen extends RetroScreen {
         if (now - lastCommunityPoll > COMMUNITY_POLL_MS) {
             loadCommunities();
         }
-        if (loading || livePolling || posts.isEmpty()) {
+        if (loading || livePolling || posts.isEmpty() || profileKey != null) {
             return;
         }
         if (now - lastLivePoll < LIVE_POLL_MS) {
@@ -173,7 +183,60 @@ public class FeedScreen extends RetroScreen {
         pollLiveFeed();
     }
 
+    // ---------- player profiles ----------
+
+    private String ownId() {
+        AccountApi.Account a = AccountManager.INSTANCE.account();
+        return a == null ? null : a.id();
+    }
+
+    private boolean ownProfile() {
+        return profile != null && FeedApiClient.isMine(profile.id());
+    }
+
+    /** Shows a player's card and their posts in the global feed (by account id or @tag). */
+    public void openProfile(String key) {
+        if (key == null || key.isEmpty()) {
+            return;
+        }
+        if (profile != null && (key.equals(profile.id()) || key.equalsIgnoreCase(profile.tag()))) {
+            scroll = 0;
+            return;
+        }
+        profileKey = key;
+        profile = null;
+        posts.clear();
+        nextCursor = null;
+        scroll = 0;
+        pendingNewAbove = 0;
+        relayout();
+        updateManageButton();
+        loading = true;
+        error = null;
+        FeedApiClient.INSTANCE.fetchProfile(key).whenComplete((p, ex) -> this.minecraft.execute(() -> {
+            if (!key.equals(profileKey)) {
+                return;
+            }
+            if (ex != null) {
+                loading = false;
+                error = FeedApiClient.unwrap(ex).userMessage();
+                return;
+            }
+            profile = p;
+            requestPage(null);
+        }));
+    }
+
+    public void closeProfile() {
+        profileKey = null;
+        profile = null;
+        updateManageButton();
+        refresh();
+    }
+
     public void switchSpace(String newSpace) {
+        profileKey = null;
+        profile = null;
         String s = newSpace == null ? "global" : newSpace;
         if (!s.equals(space)) {
             space = s;
@@ -185,6 +248,12 @@ public class FeedScreen extends RetroScreen {
     }
 
     public void refresh() {
+        if (profileKey != null && profile == null) {
+            String key = profileKey;
+            profileKey = null;
+            openProfile(key);
+            return;
+        }
         posts.clear();
         nextCursor = null;
         scroll = 0;
@@ -197,6 +266,26 @@ public class FeedScreen extends RetroScreen {
     private void requestPage(String cursor) {
         loading = true;
         error = null;
+        if (profileKey != null && profile != null) {
+            String forProfile = profileKey;
+            FeedApiClient.INSTANCE.fetchAuthorFeed(profile.id(), cursor, PAGE_SIZE)
+                    .whenComplete((page, ex) -> this.minecraft.execute(() -> {
+                        if (!forProfile.equals(profileKey)) {
+                            return;
+                        }
+                        loading = false;
+                        if (ex != null) {
+                            error = FeedApiClient.unwrap(ex).userMessage();
+                            return;
+                        }
+                        if (page.body() != null && page.body().posts != null) {
+                            posts.addAll(page.body().posts);
+                            nextCursor = page.body().nextCursor;
+                        }
+                        relayout();
+                    }));
+            return;
+        }
         String forSpace = space;
         FeedApiClient.INSTANCE.fetchFeed(forSpace, cursor, PAGE_SIZE, mineOnly, false)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
@@ -351,11 +440,13 @@ public class FeedScreen extends RetroScreen {
     private List<Item> topItems() {
         List<Item> items = new ArrayList<>();
         int unread = NotificationPoller.unreadCount();
-        items.add(new Item(tr("feed.nav.feed"), RetroUi.FG, "global".equals(space), null, 0, () -> switchSpace("global")));
+        items.add(new Item(tr("feed.nav.feed"), RetroUi.FG, "global".equals(space) && profileKey == null, null, 0, () -> switchSpace("global")));
         items.add(new Item(tr("feed.nav.notifications"), RetroUi.FG, false, unread > 0 ? String.valueOf(unread) : null,
                 RetroUi.ACCENT, () -> this.minecraft.setScreen(new NotificationsScreen(this))));
-        items.add(new Item(tr("feed.nav.profile"), RetroUi.FG, false, null, 0,
-                () -> this.minecraft.setScreen(new ProfileScreen(this))));
+        items.add(new Item(tr("feed.nav.profile"), RetroUi.FG, profileKey != null && ownProfile(), null, 0,
+                () -> openProfile(ownId())));
+        items.add(new Item(tr("feed.nav.search"), RetroUi.FG, false, null, 0,
+                () -> this.minecraft.setScreen(new SearchScreen(this))));
         items.add(new Item(tr("feed.nav.theme"), RetroUi.FG, false, null, 0,
                 () -> this.minecraft.setScreen(new ThemeScreen(this))));
         items.add(new Item(tr("feed.nav.discord"), RetroUi.FG, false, null, 0,
@@ -377,7 +468,7 @@ public class FeedScreen extends RetroScreen {
                     badge = String.valueOf(c.unread());
                 }
                 String id = c.id();
-                items.add(new Item((c.isOwner() ? "\u2605 " : "") + c.name(), RetroUi.FG, id.equals(space), badge, badgeColor,
+                items.add(new Item((c.isOwner() ? "\u2605 " : "") + c.name(), RetroUi.FG, id.equals(space) && profileKey == null, badge, badgeColor,
                         () -> switchSpace(id)));
             }
             for (CommunityApi.Pending p : m.pending()) {
@@ -465,7 +556,73 @@ public class FeedScreen extends RetroScreen {
         }
     }
 
+    private void renderProfileHeader(GuiGraphics g, int mouseX, int mouseY) {
+        int x = contentLeft();
+        int right = backButton != null ? backButton.getX() - 6 : this.width - 8;
+        if (profile == null) {
+            g.drawString(this.font, tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : ""), x, TITLE_Y, RetroUi.GRAY, false);
+            return;
+        }
+        String t = FeedUtil.clip(this.font, profile.nick(), Math.max(20, right - x));
+        g.drawString(this.font, t, x, TITLE_Y, ownProfile() ? RetroUi.ACCENT : RetroUi.FG, false);
+        String handle = "\u00b7 @" + profile.tag();
+        int hx = x + this.font.width(t) + 4;
+        if (hx + this.font.width(handle) < right) {
+            g.drawString(this.font, handle, hx, TITLE_Y, RetroUi.GRAY, false);
+        }
+
+        int tx = x;
+        List<String[]> chips = new ArrayList<>();
+        chips.add(new String[]{tr("feed.profile.posts", profile.posts()), "fg"});
+        chips.add(new String[]{tr("feed.profile.reactions", profile.reactions()), "fg"});
+        if (profile.gg() > 0) {
+            chips.add(new String[]{"[GG] " + profile.gg(), "gg"});
+        }
+        if (profile.solved() > 0) {
+            chips.add(new String[]{tr("feed.profile.solved", profile.solved()), "gg"});
+        }
+        if (profile.moderator()) {
+            chips.add(new String[]{tr("feed.profile.mod"), "mod"});
+        }
+        if (profile.discord()) {
+            chips.add(new String[]{"Discord \u2713", "gray"});
+        }
+        for (String[] c : chips) {
+            int color = switch (c[1]) {
+                case "gg" -> PostType.GG.accent();
+                case "mod" -> RetroUi.CYAN;
+                case "gray" -> RetroUi.GRAY;
+                default -> RetroUi.FG;
+            };
+            int cw = RetroUi.chipWidth(this.font, c[0]);
+            if (tx + cw > this.width - 8) {
+                break;
+            }
+            RetroUi.drawChip(g, this.font, c[0], tx, TABS_Y, color, false);
+            tx += cw + TAB_GAP;
+        }
+
+        int w = contentWidth();
+        boolean own = ownProfile();
+        boolean hover = own && mouseX >= x && mouseX < x + w && mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H;
+        RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
+        drawAvatar(g, FeedApiClient.avatarKey(profile.id(), profile.nick()), profile.nick(), x + 4, COMPOSE_Y + 4, 12);
+        String info = Component.translatable("feed.account.profile.since", AccountUi.date(profile.createdAt())).getString()
+                + " \u00b7 " + tr("feed.profile.comments", profile.comments());
+        String settings = own ? tr("feed.profile.settings") : null;
+        int sw = settings == null ? 0 : this.font.width(settings) + 8;
+        g.drawString(this.font, FeedUtil.clip(this.font, info, w - 30 - sw), x + 22, COMPOSE_Y + 6, RetroUi.GRAY, false);
+        if (settings != null) {
+            g.drawString(this.font, settings, x + w - 6 - this.font.width(settings), COMPOSE_Y + 6,
+                    hover ? RetroUi.ACCENT : RetroUi.FG, false);
+        }
+    }
+
     private void renderHeader(GuiGraphics g, int mouseX, int mouseY) {
+        if (profileKey != null) {
+            renderProfileHeader(g, mouseX, mouseY);
+            return;
+        }
         int x = contentLeft();
         CommunityApi.Community c = community();
         String title;
@@ -529,7 +686,9 @@ public class FeedScreen extends RetroScreen {
 
         if (rows.isEmpty() && !loading && error == null) {
             String key;
-            if (mineOnly) {
+            if (profileKey != null) {
+                key = profile == null ? null : "feed.profile.empty";
+            } else if (mineOnly) {
                 key = "feed.screen.feed.empty.mine";
             } else if (filter != null) {
                 key = filter.emptyKey();
@@ -538,7 +697,9 @@ public class FeedScreen extends RetroScreen {
             } else {
                 key = "feed.screen.feed.empty";
             }
-            g.drawCenteredString(this.font, Component.translatable(key), mid, top + 20, RetroUi.GRAY);
+            if (key != null) {
+                g.drawCenteredString(this.font, Component.translatable(key), mid, top + 20, RetroUi.GRAY);
+            }
         }
         if (loading) {
             String load = tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : " ");
@@ -675,6 +836,12 @@ public class FeedScreen extends RetroScreen {
         }
 
         int x = contentLeft();
+        if (profileKey != null && mouseY >= TABS_Y && mouseY < COMPOSE_Y + COMPOSE_H) {
+            if (ownProfile() && mouseY >= COMPOSE_Y && mouseX >= x && mouseX < x + contentWidth()) {
+                this.minecraft.setScreen(new ProfileScreen(this));
+            }
+            return true;
+        }
         if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
             int tx = x;
             for (Tab tab : tabs()) {
@@ -752,7 +919,7 @@ public class FeedScreen extends RetroScreen {
             return true;
         }
         if (mouseY >= this.height - 28) {
-            this.minecraft.setScreen(new ProfileScreen(this));
+            openProfile(ownId());
             return true;
         }
         return false;
@@ -772,6 +939,13 @@ public class FeedScreen extends RetroScreen {
 
     private boolean clickInsideCard(Row row, int x, int y, double mouseX, double mouseY) {
         Post post = row.post();
+        int ay = y + PAD;
+        int nameEnd = x + PAD + 22 + this.font.width(displayAuthor(post));
+        if (!post.fromDiscord && post.uuid != null && mouseY >= ay && mouseY < ay + 18
+                && mouseX >= x + PAD && mouseX < Math.min(nameEnd, x + contentWidth() - 40)) {
+            openProfile(post.uuid);
+            return true;
+        }
         int by = y + row.height() - PAD - RetroUi.CHIP_H;
         if (mouseY >= by && mouseY < by + RetroUi.CHIP_H) {
             int rx = x + PAD;
@@ -800,6 +974,10 @@ public class FeedScreen extends RetroScreen {
 
     private String tr(String key) {
         return Component.translatable(key).getString();
+    }
+
+    private static String tr(String key, Object... args) {
+        return Component.translatable(key, args).getString();
     }
 
     /** Null when no update notice should be shown. */

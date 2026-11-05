@@ -197,6 +197,8 @@ export async function feed(env, account, q, now) {
   const binds = [space.id];
   if (TYPES.includes(type)) { where.push("p.type = ?"); binds.push(type); }
   if (type === "mine") { where.push("p.author_id = ?"); binds.push(account.id); }
+  const authorId = q.get("author");
+  if (authorId && /^[0-9a-f-]{36}$/.test(authorId)) { where.push("p.author_id = ?"); binds.push(authorId); }
   const before = parseCursor(q.get("before"));
   if (before) { where.push("(p.created_at, p.id) < (?, ?)"); binds.push(...before); }
   const { results } = await env.DB.prepare(

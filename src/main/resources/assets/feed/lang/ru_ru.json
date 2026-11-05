@@ -320,5 +320,18 @@
   "feed.theme.end.sub": "эндерняк и пурпур",
   "feed.theme.terminal": "Терминал",
   "feed.theme.terminal.sub": "зелёный монитор",
-  "feed.configuration.theme": "Тема оформления"
+  "feed.configuration.theme": "Тема оформления",
+  "feed.nav.search": "Поиск",
+  "feed.search.title": "Поиск игроков",
+  "feed.search.hint": "ник или @тег",
+  "feed.search.start": "Начни вводить ник или @тег",
+  "feed.search.empty": "Никого не нашлось",
+  "feed.profile.back": "← Назад",
+  "feed.profile.posts": "постов: %d",
+  "feed.profile.reactions": "реакций: %d",
+  "feed.profile.solved": "решено: %d",
+  "feed.profile.comments": "комментариев: %d",
+  "feed.profile.mod": "модератор",
+  "feed.profile.settings": "Настройки аккаунта →",
+  "feed.profile.empty": "Постов в общей ленте пока нет."
 }

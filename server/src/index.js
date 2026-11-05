@@ -4,6 +4,7 @@ import { HttpError, json, errorResponse, readJson } from "./util.js";
 import * as A from "./accounts.js";
 import * as D from "./discord.js";
 import * as F from "./feed.js";
+import * as U from "./users.js";
 import * as N from "./notify.js";
 import * as B from "./bot.js";
 import * as C from "./communities.js";
@@ -54,7 +55,7 @@ export async function route(request, env, now) {
   if (p === "/v2/auth/recover" && m === "POST") return json(await A.recover(request, env, await readJson(request), now));
 
   const userMatch = /^\/v2\/users\/@?([^/]+)$/.exec(p);
-  if (userMatch && m === "GET") return json(await A.publicProfile(env, decodeURIComponent(userMatch[1]), now));
+  if (userMatch && m === "GET") return json(await U.profile(env, decodeURIComponent(userMatch[1])));
 
   if (p === "/v2/bot/events" && m === "POST") {
     await B.checkBot(request, env);
@@ -70,10 +71,12 @@ export async function route(request, env, now) {
 
   // everything below needs an account
   if (p.startsWith("/v2/feed") || p.startsWith("/v2/sync") || p.startsWith("/v2/posts") || p.startsWith("/v2/comments/")
-      || p.startsWith("/v2/notifications") || p === "/v2/reports" || p.startsWith("/v2/communities") || p === "/v2/join") {
+      || p.startsWith("/v2/notifications") || p === "/v2/reports" || p.startsWith("/v2/communities") || p === "/v2/join"
+      || p === "/v2/users") {
     const account = await A.authenticate(request, env, now);
     const q = url.searchParams;
     if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
+    if (p === "/v2/users" && m === "GET") return json(await U.search(env, q));
     if (p === "/v2/sync" && m === "GET") return json(await F.sync(env, account, q, now));
     if (p === "/v2/posts" && m === "POST") return json(await F.createPost(env, account, await readJson(request, 2_100_000), now), 201);
     if (p === "/v2/reports" && m === "POST") return json(await F.report(env, account, await readJson(request), now));

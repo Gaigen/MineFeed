@@ -122,6 +122,55 @@ public final class FeedApiClient {
         return loadFeed(sp, cursor, limit, mine);
     }
 
+    // ---------- players ----------
+
+    public record UserCard(String id, String tag, String nick) {}
+
+    public record Profile(String id, String tag, String nick, long createdAt, boolean discord, boolean moderator,
+                          int posts, int comments, int reactions, int gg, int solved) {}
+
+    /** Up to 10 players by @tag prefix or nick. */
+    public CompletableFuture<List<UserCard>> searchUsers(String q) {
+        String enc = java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8);
+        return call("GET", "/v2/users?q=" + enc, null).thenApply(o -> {
+            List<UserCard> list = new ArrayList<>();
+            for (JsonElement e : o.getAsJsonArray("users")) {
+                JsonObject u = e.getAsJsonObject();
+                list.add(new UserCard(str(u, "id"), str(u, "tag"), str(u, "nick")));
+            }
+            return list;
+        });
+    }
+
+    /** Public profile by account id or @tag. */
+    public CompletableFuture<Profile> fetchProfile(String idOrTag) {
+        String enc = java.net.URLEncoder.encode(idOrTag, java.nio.charset.StandardCharsets.UTF_8);
+        return call("GET", "/v2/users/" + enc, null).thenApply(o -> {
+            JsonObject u = o.getAsJsonObject("user");
+            JsonObject st = u.getAsJsonObject("stats");
+            return new Profile(str(u, "id"), str(u, "tag"), str(u, "nick"), u.get("createdAt").getAsLong(),
+                    bool(u, "discord"), bool(u, "moderator"), st.get("posts").getAsInt(), st.get("comments").getAsInt(),
+                    st.get("reactions").getAsInt(), st.get("gg").getAsInt(), st.get("solved").getAsInt());
+        });
+    }
+
+    /** Posts of one player in the global feed (profile view). */
+    public CompletableFuture<FeedPage> fetchAuthorFeed(String authorId, String cursor, int limit) {
+        StringBuilder path = new StringBuilder("/v2/feed?space=global&limit=").append(limit).append("&author=").append(authorId);
+        if (cursor != null && !cursor.isEmpty()) {
+            path.append("&before=").append(cursor);
+        }
+        return call("GET", path.toString(), null).thenApply(o -> {
+            FeedResponse r = new FeedResponse();
+            r.posts = new ArrayList<>();
+            for (JsonElement e : o.getAsJsonArray("posts")) {
+                r.posts.add(toPost(e.getAsJsonObject()));
+            }
+            r.nextCursor = str(o, "next");
+            return new FeedPage(r, false);
+        });
+    }
+
     private CompletableFuture<FeedPage> loadFeed(String space, String cursor, int limit, boolean mine) {
         StringBuilder path = new StringBuilder("/v2/feed?space=").append(space).append("&limit=").append(limit);
         if (cursor != null && !cursor.isEmpty()) {

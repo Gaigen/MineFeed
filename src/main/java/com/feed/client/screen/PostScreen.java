@@ -336,6 +336,55 @@ public class PostScreen extends RetroScreen {
         clampScroll();
     }
 
+    private void openProfile(String key) {
+        parent.openProfile(key);
+        this.minecraft.setScreen(parent);
+    }
+
+    /** "@tag." at the end of a sentence: drop trailing dots. */
+    private static String trimMention(String seg) {
+        String t = seg.substring(1);
+        while (t.endsWith(".")) {
+            t = t.substring(0, t.length() - 1);
+        }
+        return t.toLowerCase();
+    }
+
+    /** Skin or name of the post author, and @mentions in the post text. */
+    private boolean clickPostHeader(double mouseX, double mouseY) {
+        int y = TOP - scroll;
+        int ax = contentLeft() + PAD;
+        int ay = y + PAD;
+        if (mouseY < Math.max(TOP, ay) || mouseY >= listBottom()) {
+            return false;
+        }
+        int nameX = ax + AvatarCache.BODY_W + PAD + RetroUi.chipWidth(this.font, post.displayPrefix()) + 5;
+        boolean onSkin = mouseX >= ax && mouseX < ax + AvatarCache.BODY_W && mouseY < ay + AvatarCache.BODY_H;
+        boolean onName = mouseX >= nameX && mouseX < nameX + this.font.width(displayAuthor()) && mouseY >= ay + 2 && mouseY < ay + 14;
+        if ((onSkin || onName) && !post.fromDiscord && post.uuid != null) {
+            openProfile(post.uuid);
+            return true;
+        }
+        int lineY = ay + Math.max(AvatarCache.BODY_H, 16) + 6;
+        int step = this.font.lineHeight + 3;
+        int index = (int) Math.floor((mouseY - lineY) / step);
+        if (mouseY >= lineY && index >= 0 && index < postLines.size()) {
+            int lx = ax;
+            for (TagText.Seg seg : TagText.segments(postLines.get(index))) {
+                int w = this.font.width(seg.text());
+                if (mouseX >= lx && mouseX < lx + w) {
+                    if (seg.tag()) {
+                        openProfile(trimMention(seg.text()));
+                        return true;
+                    }
+                    break;
+                }
+                lx += w;
+            }
+        }
+        return false;
+    }
+
     private static final int POST_IMAGE_H = 220;
     private static final int COMMENT_IMAGE_H = 90;
     /** Screen rect of the post picture in the last frame (x, y, w, h), for clicks. */
@@ -541,6 +590,10 @@ public class PostScreen extends RetroScreen {
             return true;
         }
 
+        if (clickPostHeader(mouseX, mouseY)) {
+            return true;
+        }
+
         if (nextBefore != null && !loadingOlder && loadOlderY != Integer.MIN_VALUE
                 && mouseY >= loadOlderY - 2 && mouseY <= loadOlderY + 10) {
             loadOlder();
@@ -569,6 +622,13 @@ public class PostScreen extends RetroScreen {
                 if (mouseY < y || mouseY >= y + row.height()) {
                     continue;
                 }
+                Comment c = row.comment();
+                String cAuthor = c.author == null || c.author.isEmpty() ? "?" : c.author;
+                if (c.fromMod && c.authorId != null && mouseY >= y + 2 && mouseY < y + 3 + this.font.lineHeight
+                        && mouseX >= contentLeft() + 8 && mouseX < contentLeft() + 8 + this.font.width(cAuthor)) {
+                    openProfile(c.authorId);
+                    return true;
+                }
                 int bodyTop = y + 3 + this.font.lineHeight + 3;
                 int lineH = this.font.lineHeight + 2;
                 int index = (int) ((mouseY - bodyTop) / lineH);
@@ -578,8 +638,7 @@ public class PostScreen extends RetroScreen {
                         int w = this.font.width(seg.text());
                         if (mouseX >= lx && mouseX < lx + w) {
                             if (seg.tag()) {
-                                Minecraft.getInstance().setScreen(
-                                        new FeedScreen(seg.text().substring(1).toLowerCase()));
+                                openProfile(trimMention(seg.text()));
                                 return true;
                             }
                             break;

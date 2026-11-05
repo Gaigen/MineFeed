@@ -320,5 +320,18 @@
   "feed.theme.end.sub": "end stone and purpur",
   "feed.theme.terminal": "Terminal",
   "feed.theme.terminal.sub": "green monitor",
-  "feed.configuration.theme": "Color theme"
+  "feed.configuration.theme": "Color theme",
+  "feed.nav.search": "Search",
+  "feed.search.title": "Find players",
+  "feed.search.hint": "nick or @tag",
+  "feed.search.start": "Start typing a nick or @tag",
+  "feed.search.empty": "Nobody found",
+  "feed.profile.back": "← Back",
+  "feed.profile.posts": "posts: %d",
+  "feed.profile.reactions": "reactions: %d",
+  "feed.profile.solved": "solved: %d",
+  "feed.profile.comments": "comments: %d",
+  "feed.profile.mod": "moderator",
+  "feed.profile.settings": "Account settings →",
+  "feed.profile.empty": "No posts in the global feed yet."
 }

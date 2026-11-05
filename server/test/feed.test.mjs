@@ -271,3 +271,34 @@ test("posts with a picture: upload to Discord, refresh expired links", async () 
   await api("GET", "/v2/feed", { key: a.key });
   assert.equal(calls.filter((c) => c.path === "/api/v10/attachments/refresh-urls").length, n); // already fresh
 });
+
+test("profiles, search and the author filter", async () => {
+  const { api, user } = setup();
+  const a = await user("alice");
+  const b = await user("bob_builder");
+  await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "won" } });
+  const help = (await api("POST", "/v2/posts", { key: a.key, body: { type: "help", text: "how?" } })).data.post;
+  await api("POST", `/v2/posts/${help.id}/solve`, { key: a.key, body: { solved: true } });
+  const bp = (await api("POST", "/v2/posts", { key: b.key, body: { type: "talk", text: "hi" } })).data.post;
+  await api("POST", `/v2/posts/${bp.id}/react`, { key: a.key, body: { slot: 0 } });
+  await api("POST", `/v2/posts/${bp.id}/comments`, { key: a.key, body: { text: "yo" } });
+
+  const p = await api("GET", "/v2/users/@alice");
+  assert.equal(p.status, 200);
+  assert.deepEqual(p.data.user.stats, { posts: 2, comments: 1, reactions: 0, gg: 1, solved: 1 });
+  const byId = await api("GET", `/v2/users/${b.id}`);
+  assert.equal(byId.data.user.tag, "bob_builder");
+  assert.equal(byId.data.user.stats.reactions, 1);
+  assert.equal((await api("GET", "/v2/users/@nobody")).status, 404);
+
+  const feed = await api("GET", `/v2/feed?space=global&author=${a.id}`, { key: b.key });
+  assert.equal(feed.data.posts.length, 2);
+  assert.ok(feed.data.posts.every((x) => x.author.id === a.id));
+
+  assert.equal((await api("GET", "/v2/users?q=bob")).status, 401);
+  const s1 = await api("GET", "/v2/users?q=%40bo", { key: a.key });
+  assert.deepEqual(s1.data.users.map((u) => u.tag), ["bob_builder"]);
+  const s2 = await api("GET", "/v2/users?q=LIC", { key: b.key }); // nick "ALICE" contains it
+  assert.deepEqual(s2.data.users.map((u) => u.tag), ["alice"]);
+  assert.deepEqual((await api("GET", "/v2/users?q=%25", { key: a.key })).data.users, []);
+});
