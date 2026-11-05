@@ -300,6 +300,7 @@ export async function createPost(env, account, body, now) {
  * System text, so the usual length limits don't apply (Discord max is 2000).
  */
 export async function publishWelcome(env, spaceId, owner, { title, text, comment }, now) {
+  // Discord only: the mod doesn't show it. Not indexed in D1, so the bot ignores replies there too.
   const space = await getSpace(env, spaceId);
   const msg = await postAs(env, space, owner, {
     content: text,
@@ -307,18 +308,9 @@ export async function publishWelcome(env, spaceId, owner, { title, text, comment
     ...(space.tagIds.talk ? { applied_tags: [space.tagIds.talk] } : {}),
   });
   const id = msg.channel_id;
-  await dapi(env, "PATCH", `/channels/${id}`, { body: { flags: 2 }, allow404: true }).catch(() => {}); // pin in Discord
-  const stmts = [
-    env.DB.prepare(
-      "INSERT INTO posts (id, space, author_id, type, text, created_at, updated_at, comments, pinned) VALUES (?, ?, ?, 'talk', ?, ?, ?, ?, 1)"
-    ).bind(id, space.id, owner.id, text, now, now, comment ? 1 : 0),
-  ];
-  if (comment) {
-    const c = await postAs(env, space, owner, { content: comment }, id);
-    stmts.push(env.DB.prepare("INSERT INTO comments (id, post_id, author_id, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(c.id, id, owner.id, comment, now, now));
-  }
-  await env.DB.batch(stmts);
+  if (comment) await postAs(env, space, owner, { content: comment }, id);
+  // pin + lock: the welcome thread is read-only (Manage Threads can still write)
+  await dapi(env, "PATCH", `/channels/${id}`, { body: { flags: 2, locked: true }, allow404: true }).catch(() => {});
   return id;
 }
 

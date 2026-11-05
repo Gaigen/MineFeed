@@ -28,6 +28,13 @@ public final class AccountManager {
     private AccountManager() {
         this.store = new AccountStore(AccountStore.defaultFile(FMLPaths.GAMEDIR.get()));
         this.api = new AccountApi(FeedHttp.CLIENT, AccountApi.baseFromEnvironment(), clientVersion(), this::key);
+        AccountApi.language = () -> {
+            try {
+                return net.minecraft.client.Minecraft.getInstance().getLanguageManager().getSelected();
+            } catch (RuntimeException e) {
+                return null;
+            }
+        };
     }
 
     public static String clientVersion() {

@@ -71,9 +71,16 @@ public final class AccountApi {
                 .thenApply(j -> GSON.fromJson(j, TagCheck.class));
     }
 
+    /** Game language (e.g. ru_ru), set by the mod; the Discord result page uses it. */
+    public static volatile Supplier<String> language = () -> null;
+
     public CompletableFuture<DiscordFlow> discordStart(boolean login) {
         JsonObject body = new JsonObject();
         body.addProperty("kind", login ? "login" : "link");
+        String lang = language.get();
+        if (lang != null) {
+            body.addProperty("lang", lang);
+        }
         return send("POST", "/v2/discord/start", body, !login).thenApply(j -> GSON.fromJson(j, DiscordFlow.class));
     }
 

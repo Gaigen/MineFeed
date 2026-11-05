@@ -104,7 +104,7 @@ public class NotificationsScreen extends RetroScreen {
         int cx = contentLeft(), cw = contentWidth(), y = TOP - scroll;
         for (FeedApiClient.Notif n : items) {
             if (mouseY >= y && mouseY < y + ROW_H && mouseX >= cx && mouseX < cx + cw) {
-                PostOpener.open(this.minecraft, parent, n.postId());
+                PostOpener.open(this.minecraft, parent, n);
                 return true;
             }
             y += ROW_H + 6;

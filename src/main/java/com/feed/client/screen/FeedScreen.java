@@ -1,90 +1,96 @@
 package com.feed.client.screen;
 
 import com.feed.client.AvatarCache;
+import com.feed.client.CommunityApi;
 import com.feed.client.FeedApiClient;
 import com.feed.client.FeedTime;
+import com.feed.client.FeedUtil;
 import com.feed.client.NotificationPoller;
 import com.feed.client.ReactionHelper;
-import com.feed.data.Post;
-import com.feed.data.PostType;
-import net.minecraft.client.gui.GuiGraphics;
 import com.feed.client.account.AccountApi;
 import com.feed.client.account.AccountManager;
 import com.feed.client.account.UpdateChecker;
-import net.minecraft.client.gui.components.EditBox;
+import com.feed.data.Post;
+import com.feed.data.PostType;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Main feed screen: type tabs, tag search, reaction chips.
+ * Main screen: sidebar (feed, notifications, profile, communities) + the feed of the selected space.
  */
 @OnlyIn(Dist.CLIENT)
 public class FeedScreen extends RetroScreen {
 
     private static final int PAGE_SIZE = 20;
-    private static final int HEADER_H = 64;
-    private static final int TABS_Y = 36;
-    private static final int TAB_GAP = 6;
     private static final int PAD = 8;
-    private static final String DISCORD_LABEL = "DISCORD";
+    private static final int TAB_GAP = 6;
     private static final int CARD_GAP = 10;
     private static final int SCROLL_STEP = 18;
     private static final int LOAD_MORE_THRESHOLD = 40;
-    private static final int STATS_H = 30;
-    private static final int STATS_BLOCK = STATS_H + CARD_GAP;
-    private static final int SEARCH_H = 18;
-    private static final int SUGG_ROW_H = 12;
-    private static final int HDR_Y = 6;
-    private static final int HDR_RIGHT = 8;
-    private static final int HDR_GAP = 6;
-    private static final int NEW_BTN_W = 58;
-    private static final int NEW_BTN_H = 18;
-    private static final int SEARCH_BTN_W = 20;
-    private static final int SEARCH_BTN_H = 14;
-    private static final long LIVE_POLL_MS = 60_000L;
+    private static final int TITLE_Y = 8;
+    private static final int TABS_Y = 24;
+    private static final int COMPOSE_Y = 42;
+    private static final int COMPOSE_H = 20;
+    private static final int LIST_TOP = COMPOSE_Y + COMPOSE_H + 8;
+    private static final int SB_ROW = 14;
+    private static final int SB_TOP = 26;
+    private static final long LIVE_POLL_MS = 30_000L;
+    private static final long COMMUNITY_POLL_MS = 30_000L;
 
     private final List<Post> posts = new ArrayList<>();
     private final List<Row> rows = new ArrayList<>();
 
+    /** "global" or a community id. */
+    private String space = "global";
     private PostType filter;
-    private String tagFilter;
     private boolean mineOnly;
     private String nextCursor;
     private boolean loading;
     private boolean livePolling;
     private long lastLivePoll;
+    private long lastCommunityPoll;
     private Component error;
     private int scroll;
     private int contentHeight;
-
-    private EditBox searchBox;
-    private boolean searchOpen = false;
-    private List<FeedApiClient.TagCount> suggestions = new ArrayList<>();
-    private String lastSentQuery = null;
-    private long lastTypedAt = 0L;
-    private int pendingNewAbove = 0;
+    private int pendingNewAbove;
+    private int sbScroll;
+    private RetroButton manageButton;
 
     private record Row(Post post, List<String> lines, int y, int height) {}
+
+    /** One clickable line in the sidebar. */
+    private record Item(String label, int color, boolean active, String badge, int badgeColor, Runnable action) {}
+
+    private record Tab(String label, int color, boolean active, PostType type, boolean mine) {}
 
     public FeedScreen() {
         super(Component.translatable("feed.brand.title"));
     }
 
-    public FeedScreen(String tag) {
+    /** Hashtags are gone in v2; kept for old call sites. */
+    public FeedScreen(String ignoredTag) {
         this();
-        this.tagFilter = tag;
     }
+
+    public String space() {
+        return space;
+    }
+
+    public CommunityApi.Community community() {
+        return "global".equals(space) ? null : CommunityApi.cachedById(space);
+    }
+
+    // ---------- lifecycle ----------
 
     @Override
     protected void init() {
@@ -99,41 +105,51 @@ public class FeedScreen extends RetroScreen {
         }
         AccountManager.INSTANCE.refreshOnce();
         UpdateChecker.checkOnce();
-        addRenderableWidget(new RetroButton(PAD, HDR_Y, profileButtonWidth(), SEARCH_BTN_H,
-                Component.literal(profileLabel()), b -> this.minecraft.setScreen(new ProfileScreen(this))));
-        int dcX = PAD + profileButtonWidth() + 4;
-        int dcW = this.font.width(DISCORD_LABEL) + 10;
-        int titleLeft = (this.width - this.font.width(this.title.getString() + "_")) / 2;
-        if (dcX + dcW < titleLeft - 4) { // only when it doesn't collide with the title
-            addRenderableWidget(new RetroButton(dcX, HDR_Y, dcW, SEARCH_BTN_H, Component.literal(DISCORD_LABEL),
-                    b -> net.minecraft.Util.getPlatform().openUri(UpdateChecker.discordUrl())));
-        }
 
-        searchBox = new EditBox(this.font, contentLeft() + 2, TABS_Y + 20,
-                contentWidth() - 4, 12, Component.translatable("feed.screen.feed.search"));
-        searchBox.setBordered(false);
-        searchBox.setMaxLength(32);
-        searchBox.setVisible(false);
-        searchBox.setResponder(s -> lastTypedAt = System.currentTimeMillis());
-        addRenderableWidget(searchBox);
-
-        addRenderableWidget(new RetroButton(hdrSearchX(), HDR_Y, SEARCH_BTN_W, SEARCH_BTN_H,
-                Component.translatable("feed.screen.feed.search_btn"), b -> {
-            searchOpen = !searchOpen;
-            searchBox.setVisible(searchOpen);
-            if (searchOpen) {
-                setFocused(searchBox);
-                lastSentQuery = null;
+        manageButton = addRenderableWidget(new RetroButton(this.width - 8 - 70, 5, 70, 14,
+                Component.translatable("feed.space.manage"), b -> {
+            CommunityApi.Community c = community();
+            if (c != null) {
+                this.minecraft.setScreen(new CommunityScreen(this, c));
             }
         }));
-
-        addRenderableWidget(new RetroButton(hdrNewX(), HDR_Y, NEW_BTN_W, NEW_BTN_H,
-                Component.translatable("feed.screen.feed.new_post"), b -> this.minecraft.setScreen(new ComposeScreen(this))));
+        updateManageButton();
 
         relayout();
+        if (System.currentTimeMillis() - lastCommunityPoll > 5_000L) {
+            loadCommunities();
+        }
         if (posts.isEmpty() && !loading) {
             refresh();
         }
+    }
+
+    private void updateManageButton() {
+        if (manageButton == null) {
+            return;
+        }
+        CommunityApi.Community c = community();
+        manageButton.visible = c != null;
+        if (c != null) {
+            Component label = Component.translatable(c.isMod() ? "feed.space.manage" : "feed.space.info");
+            int w = this.font.width(label) + 14;
+            manageButton.setMessage(label);
+            manageButton.setWidth(w);
+            manageButton.setX(this.width - 8 - w);
+        }
+    }
+
+    public void loadCommunities() {
+        lastCommunityPoll = System.currentTimeMillis();
+        CommunityApi.mine().whenComplete((m, ex) -> this.minecraft.execute(() -> {
+            if (ex != null || m == null) {
+                return;
+            }
+            if (!"global".equals(space) && CommunityApi.cachedById(space) == null) {
+                switchSpace("global"); // left, kicked or deleted
+            }
+            updateManageButton();
+        }));
     }
 
     @Override
@@ -143,24 +159,29 @@ public class FeedScreen extends RetroScreen {
             this.minecraft.setScreen(new WelcomeScreen(this));
             return;
         }
-        if (searchOpen && System.currentTimeMillis() - lastTypedAt > 300) {
-            String q = searchBox.getValue().trim().replace("#", "").toLowerCase();
-            if (!q.equals(lastSentQuery)) {
-                lastSentQuery = q;
-                FeedApiClient.INSTANCE.fetchTags(q).thenAccept(tags ->
-                        this.minecraft.execute(() ->
-                                suggestions = tags == null ? new ArrayList<>() : new ArrayList<>(tags)));
-            }
+        long now = System.currentTimeMillis();
+        if (now - lastCommunityPoll > COMMUNITY_POLL_MS) {
+            loadCommunities();
         }
         if (loading || livePolling || posts.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
         if (now - lastLivePoll < LIVE_POLL_MS) {
             return;
         }
         lastLivePoll = now;
         pollLiveFeed();
+    }
+
+    public void switchSpace(String newSpace) {
+        String s = newSpace == null ? "global" : newSpace;
+        if (!s.equals(space)) {
+            space = s;
+            filter = null;
+            mineOnly = false;
+        }
+        updateManageButton();
+        refresh();
     }
 
     public void refresh() {
@@ -176,8 +197,12 @@ public class FeedScreen extends RetroScreen {
     private void requestPage(String cursor) {
         loading = true;
         error = null;
-        FeedApiClient.INSTANCE.fetchFeed(cursor, PAGE_SIZE, tagFilter, mineOnly, false)
+        String forSpace = space;
+        FeedApiClient.INSTANCE.fetchFeed(forSpace, cursor, PAGE_SIZE, mineOnly, false)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
+                    if (!forSpace.equals(space)) {
+                        return; // switched meanwhile
+                    }
                     loading = false;
                     lastLivePoll = System.currentTimeMillis();
                     if (ex != null) {
@@ -193,15 +218,19 @@ public class FeedScreen extends RetroScreen {
                     }
                     nextCursor = resp.nextCursor;
                     relayout();
+                    if (cursor == null && !"global".equals(space)) {
+                        loadCommunities(); // opening a community clears its unread badge
+                    }
                 }));
     }
 
     private void pollLiveFeed() {
         livePolling = true;
-        FeedApiClient.INSTANCE.fetchFeed(null, PAGE_SIZE, tagFilter, mineOnly, true)
+        String forSpace = space;
+        FeedApiClient.INSTANCE.fetchFeed(forSpace, null, PAGE_SIZE, mineOnly, true)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
                     livePolling = false;
-                    if (ex != null || page == null || page.notModified()) {
+                    if (!forSpace.equals(space) || ex != null || page == null || page.notModified()) {
                         return;
                     }
                     if (page.body() == null || page.body().posts == null) {
@@ -251,18 +280,12 @@ public class FeedScreen extends RetroScreen {
         }
         boolean atTop = scroll <= SCROLL_STEP;
         int oldScroll = scroll;
+        int oldHeight = contentHeight;
         posts.addAll(0, brandNew);
-        if (!atTop) {
-            pendingNewAbove += brandNew.size();
-        }
         relayout();
         if (!atTop) {
-            int bump = 0;
-            int n = Math.min(brandNew.size(), rows.size());
-            for (int i = 0; i < n; i++) {
-                bump += rows.get(i).height() + CARD_GAP;
-            }
-            scroll = oldScroll + bump;
+            pendingNewAbove += brandNew.size();
+            scroll = oldScroll + (contentHeight - oldHeight);
             clampScroll();
         }
     }
@@ -270,15 +293,14 @@ public class FeedScreen extends RetroScreen {
     private void relayout() {
         rows.clear();
         int textW = contentWidth() - PAD * 2;
-        int y = STATS_BLOCK;
+        int y = 0;
         for (Post post : posts) {
             if (filter != null && post.postType() != filter) {
                 continue;
             }
             List<String> lines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
             int lineStep = this.font.lineHeight + 3;
-            int h = PAD + 16 + 6 + lines.size() * lineStep
-                    + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
+            int h = PAD + 16 + 6 + lines.size() * lineStep + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
             rows.add(new Row(post, lines, y, h));
             y += h + CARD_GAP;
         }
@@ -286,115 +308,217 @@ public class FeedScreen extends RetroScreen {
         clampScroll();
     }
 
+    // ---------- geometry ----------
+
+    private int sidebarW() {
+        return Math.max(92, Math.min(132, this.width / 4));
+    }
+
+    @Override
+    protected int contentWidth() {
+        return Math.min(420, this.width - sidebarW() - 24);
+    }
+
+    @Override
+    protected int contentLeft() {
+        int sb = sidebarW();
+        return sb + (this.width - sb - contentWidth()) / 2;
+    }
+
+    private int listBottom() {
+        return this.height - 6;
+    }
+
+    // ---------- rendering ----------
+
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         g.fill(0, 0, this.width, this.height, RetroUi.BG);
-        g.fill(0, listTop() - 5, this.width, listTop() - 4, RetroUi.SHADOW);
+        g.fill(sidebarW(), 0, sidebarW() + 1, this.height, RetroUi.SHADOW);
     }
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         super.render(g, mouseX, mouseY, partialTick);
-        renderHeader(g);
-        if (searchOpen) {
-            renderSearch(g, mouseX, mouseY);
-        }
+        renderSidebar(g, mouseX, mouseY);
+        renderHeader(g, mouseX, mouseY);
         renderList(g, mouseX, mouseY);
+    }
 
-        if (updateLabel() != null) {
-            RetroUi.drawChip(g, this.font, updateLabel(), PAD, updateChipY(),
+    private List<Item> topItems() {
+        List<Item> items = new ArrayList<>();
+        int unread = NotificationPoller.unreadCount();
+        items.add(new Item(tr("feed.nav.feed"), RetroUi.FG, "global".equals(space), null, 0, () -> switchSpace("global")));
+        items.add(new Item(tr("feed.nav.notifications"), RetroUi.FG, false, unread > 0 ? String.valueOf(unread) : null,
+                RetroUi.ACCENT, () -> this.minecraft.setScreen(new NotificationsScreen(this))));
+        items.add(new Item(tr("feed.nav.profile"), RetroUi.FG, false, null, 0,
+                () -> this.minecraft.setScreen(new ProfileScreen(this))));
+        items.add(new Item(tr("feed.nav.discord"), RetroUi.FG, false, null, 0,
+                () -> net.minecraft.Util.getPlatform().openUri(UpdateChecker.discordUrl())));
+        return items;
+    }
+
+    private List<Item> communityItems() {
+        List<Item> items = new ArrayList<>();
+        CommunityApi.Mine m = CommunityApi.cached();
+        if (m != null) {
+            for (CommunityApi.Community c : m.communities()) {
+                String badge = null;
+                int badgeColor = RetroUi.ACCENT;
+                if (c.isMod() && c.requests() > 0) {
+                    badge = "+" + c.requests();
+                    badgeColor = RetroUi.ERROR;
+                } else if (c.unread() > 0) {
+                    badge = String.valueOf(c.unread());
+                }
+                String id = c.id();
+                items.add(new Item((c.isOwner() ? "\u2605 " : "") + c.name(), RetroUi.FG, id.equals(space), badge, badgeColor,
+                        () -> switchSpace(id)));
+            }
+            for (CommunityApi.Pending p : m.pending()) {
+                items.add(new Item("\u231b " + p.name(), RetroUi.GRAY, false, null, 0, null));
+            }
+        }
+        items.add(new Item(tr("feed.nav.join"), RetroUi.ACCENT, false, null, 0,
+                () -> this.minecraft.setScreen(new JoinCodeScreen(this))));
+        CommunityApi.Application app = m == null ? null : m.application();
+        boolean owns = m != null && m.communities().stream().anyMatch(CommunityApi.Community::isOwner);
+        if (app != null && app.pending()) {
+            items.add(new Item(tr("feed.nav.applied"), RetroUi.GRAY, false, null, 0,
+                    () -> this.minecraft.setScreen(new ApplyScreen(this))));
+        } else if (!owns) {
+            items.add(new Item(tr("feed.nav.apply"), RetroUi.ACCENT, false, null, 0,
+                    () -> this.minecraft.setScreen(new ApplyScreen(this))));
+        }
+        return items;
+    }
+
+    private int communitiesTop() {
+        return SB_TOP + topItems().size() * SB_ROW + 8;
+    }
+
+    private int sidebarBottom() {
+        return this.height - 30 - (updateLabel() != null ? RetroUi.CHIP_H + 4 : 0);
+    }
+
+    private void renderSidebar(GuiGraphics g, int mouseX, int mouseY) {
+        int sw = sidebarW();
+        RetroUi.drawBlinkingTitle(g, this.font, "MineFeed", 6, TITLE_Y, RetroUi.ACCENT);
+        int y = SB_TOP;
+        for (Item it : topItems()) {
+            drawItem(g, it, y, mouseX, mouseY, sw);
+            y += SB_ROW;
+        }
+        int ct = communitiesTop();
+        g.drawString(this.font, tr("feed.nav.communities"), 8, ct, RetroUi.GRAY, false);
+        int listTop = ct + 12;
+        int bottom = sidebarBottom();
+        g.enableScissor(0, listTop, sw, bottom);
+        y = listTop - sbScroll;
+        for (Item it : communityItems()) {
+            if (y + SB_ROW > listTop && y < bottom) {
+                drawItem(g, it, y, mouseX, mouseY >= listTop && mouseY < bottom ? mouseY : -1, sw);
+            }
+            y += SB_ROW;
+        }
+        g.disableScissor();
+
+        String upd = updateLabel();
+        if (upd != null) {
+            RetroUi.drawChip(g, this.font, FeedUtil.clip(this.font, upd, sw - 20), 6, bottom + 2,
                     UpdateChecker.state() == UpdateChecker.State.OUTDATED ? RetroUi.ERROR : RetroUi.ACCENT, false);
         }
-
-        String label = "!" + NotificationPoller.unreadCount();
-        RetroUi.drawChip(g, this.font, label, hdrNotifX(label), HDR_Y,
-                NotificationPoller.hasUnread() ? RetroUi.ERROR : RetroUi.GRAY, NotificationPoller.hasUnread());
+        int py = this.height - 26;
+        g.fill(6, py - 4, sw - 6, py - 3, RetroUi.SHADOW);
+        boolean hover = mouseX >= 0 && mouseX < sw && mouseY >= py - 2 && mouseY < this.height;
+        if (hover) {
+            g.fill(2, py - 2, sw - 2, this.height - 2, RetroUi.HOVER_BG);
+        }
+        AccountApi.Account a = AccountManager.INSTANCE.account();
+        String nick = a == null ? "?" : a.nick();
+        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), nick), nick, 6, py + 1, 16);
+        g.drawString(this.font, FeedUtil.clip(this.font, nick, sw - 34), 26, py, RetroUi.FG, false);
+        g.drawString(this.font, FeedUtil.clip(this.font, "@" + (a == null ? "?" : a.tag()), sw - 34), 26, py + 10, RetroUi.GRAY, false);
     }
 
-    private void renderHeader(GuiGraphics g) {
-        String title = this.title.getString() + (RetroUi.blink() ? "_" : " ");
-        g.drawString(this.font, title, (this.width - this.font.width(title)) / 2, 8, RetroUi.FG, false);
-        String tag = Component.translatable("feed.brand.tagline").getString();
-        g.drawString(this.font, tag, (this.width - this.font.width(tag)) / 2, 18, RetroUi.GRAY, false);
+    private void drawItem(GuiGraphics g, Item it, int y, int mouseX, int mouseY, int sw) {
+        boolean hover = it.action() != null && mouseX >= 0 && mouseX < sw && mouseY >= y - 2 && mouseY < y + SB_ROW - 2;
+        if (it.active() || hover) {
+            g.fill(4, y - 2, sw - 4, y + SB_ROW - 3, RetroUi.HOVER_BG);
+        }
+        if (it.active()) {
+            g.fill(4, y - 2, 6, y + SB_ROW - 3, RetroUi.ACCENT);
+        }
+        int badgeW = it.badge() == null ? 0 : this.font.width(it.badge()) + 6;
+        String label = FeedUtil.clip(this.font, it.label(), sw - 18 - badgeW);
+        int color = (it.active() || hover) && it.color() == RetroUi.FG ? 0xFFFFFFFF : it.color();
+        g.drawString(this.font, label, 10, y + 1, color, false);
+        if (it.badge() != null) {
+            int bx = sw - 8 - badgeW;
+            g.fill(bx, y - 1, bx + badgeW, y + 10, it.badgeColor());
+            g.drawString(this.font, it.badge(), bx + 3, y + 1, RetroUi.BG, false);
+        }
+    }
 
-        String all = Component.translatable("feed.screen.feed.tab.all").getString();
-        String mine = Component.translatable("feed.screen.feed.tab.mine").getString();
-        int x = tabsStartX();
-        boolean allActive = filter == null && !mineOnly;
-        RetroUi.drawChip(g, this.font, all, x, TABS_Y, RetroUi.FG, allActive);
-        x += RetroUi.chipWidth(this.font, all) + TAB_GAP;
-        RetroUi.drawChip(g, this.font, mine, 8, TABS_Y, RetroUi.ACCENT, mineOnly);
+    private void renderHeader(GuiGraphics g, int mouseX, int mouseY) {
+        int x = contentLeft();
+        CommunityApi.Community c = community();
+        String title;
+        String sub;
+        if (c == null) {
+            title = tr("feed.space.global");
+            sub = tr("feed.space.global_sub");
+        } else {
+            title = c.name();
+            sub = Component.translatable("feed.space.members", c.members()).getString();
+        }
+        int right = manageButton != null && manageButton.visible ? manageButton.getX() - 6 : this.width - 8;
+        String t = FeedUtil.clip(this.font, title, Math.max(20, right - x));
+        g.drawString(this.font, t, x, TITLE_Y, RetroUi.FG, false);
+        int sx = x + this.font.width(t) + 4;
+        if (sx + this.font.width("\u00b7 " + sub) < right) {
+            g.drawString(this.font, "\u00b7 " + sub, sx, TITLE_Y, RetroUi.GRAY, false);
+        }
+
+        int tx = x;
+        for (Tab tab : tabs()) {
+            RetroUi.drawChip(g, this.font, tab.label(), tx, TABS_Y, tab.color(), tab.active());
+            tx += RetroUi.chipWidth(this.font, tab.label()) + TAB_GAP;
+        }
+
+        int w = contentWidth();
+        boolean hover = mouseX >= x && mouseX < x + w && mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H;
+        RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
+        AccountApi.Account a = AccountManager.INSTANCE.account();
+        String nick = a == null ? "?" : a.nick();
+        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), nick), nick, x + 4, COMPOSE_Y + 4, 12);
+        String hint = Component.translatable("feed.compose.bar", nick).getString();
+        g.drawString(this.font, FeedUtil.clip(this.font, hint, w - 30), x + 22, COMPOSE_Y + 6, hover ? RetroUi.FG : RetroUi.GRAY, false);
+    }
+
+    private List<Tab> tabs() {
+        List<Tab> list = new ArrayList<>();
+        list.add(new Tab(tr("feed.screen.feed.tab.all"), RetroUi.FG, filter == null && !mineOnly, null, false));
         for (PostType type : PostType.values()) {
-            RetroUi.drawChip(g, this.font, type.prefix, x, TABS_Y, type.accent, filter == type);
-            x += RetroUi.chipWidth(this.font, type.prefix) + TAB_GAP;
+            list.add(new Tab(type.prefix, type.accent, filter == type, type, false));
         }
-
-        if (tagFilter != null) {
-            RetroUi.drawChip(g, this.font, tagLabel(), contentLeft(), HEADER_H, RetroUi.ACCENT, true);
-        }
-    }
-
-    private void renderSearch(GuiGraphics g, int mouseX, int mouseY) {
-        int sx = contentLeft();
-        int sy = TABS_Y + 18;
-        RetroUi.drawBox(g, sx, sy, contentWidth(), SEARCH_H, false);
-
-        if (searchBox.getValue().isBlank() && !suggestions.isEmpty()) {
-            g.drawString(this.font, Component.translatable("feed.screen.feed.trending"),
-                    sx + 2, sy + SEARCH_H + 2, RetroUi.GRAY, false);
-        }
-
-        int rowY = sy + SEARCH_H + (searchBox.getValue().isBlank() ? 12 : 2);
-        for (FeedApiClient.TagCount tc : suggestions) {
-            String row = "#" + tc.tag() + " (" + tc.count() + ")";
-            boolean hover = mouseX >= sx && mouseX <= sx + contentWidth()
-                    && mouseY >= rowY && mouseY < rowY + SUGG_ROW_H;
-            if (hover) {
-                g.fill(sx, rowY, sx + contentWidth(), rowY + SUGG_ROW_H, RetroUi.HOVER_BG);
-            }
-            g.drawString(this.font, row, sx + 4, rowY + 2,
-                    hover ? RetroUi.ACCENT : RetroUi.FG, false);
-            rowY += SUGG_ROW_H;
-        }
-    }
-
-    private int tabsStartX() {
-        String all = Component.translatable("feed.screen.feed.tab.all").getString();
-        int total = RetroUi.chipWidth(this.font, all);
-        for (PostType type : PostType.values()) {
-            total += TAB_GAP + RetroUi.chipWidth(this.font, type.prefix);
-        }
-        return (this.width - total) / 2;
+        list.add(new Tab(tr("feed.screen.feed.tab.mine"), RetroUi.ACCENT, mineOnly, null, true));
+        return list;
     }
 
     private void renderList(GuiGraphics g, int mouseX, int mouseY) {
-        int top = listTop();
-        int bottom = this.height - 8;
-        g.enableScissor(0, top, this.width, bottom);
-
-        drawStats(g, contentLeft(), top - scroll);
-
-        if (pendingNewAbove > 0) {
-            String label = Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
-            int lw = this.font.width(label);
-            int lx = this.width / 2 - lw / 2;
-            int ny = top + STATS_BLOCK - scroll - 14;
-            boolean hover = mouseX >= lx - 4 && mouseX <= lx + lw + 4
-                    && mouseY >= ny - 2 && mouseY <= ny + 10;
-            if (hover) {
-                g.fill(lx - 4, ny - 2, lx + lw + 4, ny + 10, RetroUi.HOVER_BG);
-            }
-            g.drawString(this.font, label, lx, ny, hover ? RetroUi.ACCENT : RetroUi.FG, false);
-        }
+        int top = LIST_TOP;
+        int bottom = listBottom();
+        int cx = contentLeft();
+        int mid = cx + contentWidth() / 2;
+        g.enableScissor(sidebarW() + 1, top, this.width, bottom);
 
         for (Row row : rows) {
             int y = top + row.y() - scroll;
             if (y + row.height() >= top && y <= bottom) {
-                boolean hovered = mouseX >= contentLeft()
-                        && mouseX < contentLeft() + contentWidth()
-                        && mouseY >= Math.max(y, top)
-                        && mouseY < Math.min(y + row.height(), bottom);
-                drawCard(g, row, contentLeft(), y, hovered);
+                boolean hovered = mouseX >= cx && mouseX < cx + contentWidth()
+                        && mouseY >= Math.max(y, top) && mouseY < Math.min(y + row.height(), bottom);
+                drawCard(g, row, cx, y, hovered);
             }
         }
 
@@ -404,21 +528,29 @@ public class FeedScreen extends RetroScreen {
                 key = "feed.screen.feed.empty.mine";
             } else if (filter != null) {
                 key = filter.emptyKey();
+            } else if (!"global".equals(space)) {
+                key = "feed.screen.feed.empty.community";
             } else {
                 key = "feed.screen.feed.empty";
             }
-            g.drawCenteredString(this.font, Component.translatable(key),
-                    this.width / 2, top + STATS_BLOCK + 20, RetroUi.GRAY);
+            g.drawCenteredString(this.font, Component.translatable(key), mid, top + 20, RetroUi.GRAY);
         }
         if (loading) {
-            String load = Component.translatable("feed.screen.loading").getString()
-                    + (RetroUi.blinkFast() ? "_" : " ");
-            g.drawCenteredString(this.font, load, this.width / 2, bottom - 14, RetroUi.GRAY);
+            String load = tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : " ");
+            g.drawCenteredString(this.font, load, mid, bottom - 14, RetroUi.GRAY);
         }
         if (error != null) {
-            g.drawCenteredString(this.font, error, this.width / 2, bottom - 14, RetroUi.ERROR);
+            g.drawCenteredString(this.font, error, mid, bottom - 14, RetroUi.ERROR);
         }
         g.disableScissor();
+
+        if (pendingNewAbove > 0) {
+            String label = newAboveLabel();
+            int lw = RetroUi.chipWidth(this.font, label);
+            int lx = mid - lw / 2;
+            boolean hover = mouseX >= lx && mouseX < lx + lw && mouseY >= top + 2 && mouseY < top + 2 + RetroUi.CHIP_H;
+            RetroUi.drawChip(g, this.font, label, lx, top + 2, RetroUi.ACCENT, !hover);
+        }
 
         int viewport = bottom - top;
         if (contentHeight > viewport) {
@@ -428,34 +560,19 @@ public class FeedScreen extends RetroScreen {
         }
     }
 
-    private void drawStats(GuiGraphics g, int x, int y) {
-        int w = contentWidth();
-        int half = (w - CARD_GAP) / 2;
-        RetroUi.drawBox(g, x, y, half, STATS_H, false);
-        RetroUi.drawBox(g, x + half + CARD_GAP, y, half, STATS_H, false);
-
-        g.drawString(this.font, Component.translatable("feed.screen.feed.stats.posts"),
-                x + 6, y + 5, RetroUi.GRAY, false);
-        String count = rows.size() + (nextCursor != null ? "+" : "");
-        g.drawString(this.font, count, x + 6, y + 16, RetroUi.FG, false);
-
-        g.drawString(this.font, Component.translatable("feed.screen.feed.stats.top"),
-                x + half + CARD_GAP + 6, y + 5, RetroUi.GRAY, false);
-        g.drawString(this.font, topType(), x + half + CARD_GAP + 6, y + 16, RetroUi.FG, false);
+    private String newAboveLabel() {
+        return Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
     }
 
-    private String topType() {
-        Map<PostType, Integer> counts = new EnumMap<>(PostType.class);
-        for (Post post : posts) {
-            counts.merge(post.postType(), 1, Integer::sum);
+    private void drawAvatar(GuiGraphics g, String key, String name, int x, int y, int size) {
+        ResourceLocation avatar = AvatarCache.get(key);
+        if (avatar != null) {
+            g.blit(avatar, x, y, 0, 0, size, size, size, size);
+        } else {
+            g.fill(x, y, x + size, y + size, RetroUi.GRAY);
+            String letter = name == null || name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase();
+            g.drawString(this.font, letter, x + (size - this.font.width(letter)) / 2 + 1, y + (size - 8) / 2, RetroUi.BG, false);
         }
-        PostType best = null;
-        for (Map.Entry<PostType, Integer> e : counts.entrySet()) {
-            if (best == null || e.getValue() > counts.get(best)) {
-                best = e.getKey();
-            }
-        }
-        return best == null ? "-" : best.prefix;
     }
 
     private void drawCard(GuiGraphics g, Row row, int x, int y, boolean hovered) {
@@ -468,33 +585,26 @@ public class FeedScreen extends RetroScreen {
 
         int ax = x + PAD;
         int ay = y + PAD;
-        ResourceLocation avatar = AvatarCache.get(FeedApiClient.avatarKey(post.uuid, post.author));
-        if (avatar != null) {
-            g.blit(avatar, ax, ay, 0, 0, 16, 16, 16, 16);
-        } else {
-            g.fill(ax, ay, ax + 16, ay + 16, gray);
-            String letter = displayAuthor(post).substring(0, 1).toUpperCase();
-            g.drawString(this.font, letter, ax + (16 - this.font.width(letter)) / 2, ay + 4,
-                    RetroUi.BG, false);
-        }
+        drawAvatar(g, FeedApiClient.avatarKey(post.uuid, post.author), displayAuthor(post), ax, ay, 16);
         g.renderOutline(ax, ay, 16, 16, fg);
 
-        int nx = ax + 24;
-        RetroUi.drawChip(g, this.font, post.displayPrefix(), nx, ay + 2, post.prefixColor(), false);
-        int tx = nx + RetroUi.chipWidth(this.font, post.displayPrefix()) + 5;
-        boolean own = isOwn(post);
-        String name = displayAuthor(post);
-        g.drawString(this.font, name, tx, ay + 4, own ? RetroUi.ACCENT : fg, false);
-        g.drawString(this.font, "\u00b7 " + FeedTime.ago(post.createdAt),
-                tx + this.font.width(name) + 4, ay + 4, gray, false);
+        int nx = ax + 22;
+        boolean own = FeedApiClient.isMine(post.uuid);
+        String chip = post.displayPrefix();
+        int chipW = RetroUi.chipWidth(this.font, chip);
+        String shownName = FeedUtil.clip(this.font, displayAuthor(post), w - PAD * 2 - 22 - chipW - 6);
+        g.drawString(this.font, shownName, nx, ay, own ? RetroUi.ACCENT : fg, false);
+        String handle = post.fromDiscord ? "Discord" : (post.authorTag != null ? "@" + post.authorTag : "");
+        int hx = nx + this.font.width(shownName) + 4;
+        if (!handle.isEmpty() && hx + this.font.width(handle) < x + w - PAD - chipW - 6) {
+            g.drawString(this.font, handle, hx, ay, gray, false);
+        }
+        g.drawString(this.font, FeedTime.ago(post.createdAt), nx, ay + 9, gray, false);
+        RetroUi.drawChip(g, this.font, chip, x + w - PAD - chipW, ay + 1, post.prefixColor(), false);
 
         int lineY = y + PAD + 16 + 6;
         for (String line : row.lines()) {
-            int lx = x + PAD;
-            for (TagText.Seg seg : TagText.segments(line)) {
-                g.drawString(this.font, seg.text(), lx, lineY, seg.tag() ? type.accent : fg, false);
-                lx += this.font.width(seg.text());
-            }
+            g.drawString(this.font, line, x + PAD, lineY, fg, false);
             lineY += this.font.lineHeight + 3;
         }
 
@@ -504,17 +614,25 @@ public class FeedScreen extends RetroScreen {
         for (String key : type.reactions()) {
             int count = post.reactionCount(key);
             EmojiIcon icon = EmojiIcon.byKey(key);
-            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by,
-                    type.accent, post.mine(key), cardBg);
+            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by, type.accent, post.mine(key), cardBg);
             rx += RetroUi.reactionChipWidth(this.font, icon, String.valueOf(count)) + TAB_GAP;
         }
         String cc = "\u270e " + post.commentCount;
         g.drawString(this.font, cc, x + w - PAD - this.font.width(cc), by + 2, gray, false);
     }
 
+    // ---------- input ----------
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {
         if (super.mouseScrolled(mouseX, mouseY, dx, dy)) {
+            return true;
+        }
+        if (mouseX < sidebarW()) {
+            int listTop = communitiesTop() + 12;
+            int total = communityItems().size() * SB_ROW;
+            int max = Math.max(0, total - (sidebarBottom() - listTop));
+            sbScroll = Math.max(0, Math.min(max, sbScroll - (int) (dy * SB_ROW)));
             return true;
         }
         scroll -= (int) (dy * SCROLL_STEP);
@@ -522,9 +640,8 @@ public class FeedScreen extends RetroScreen {
             pendingNewAbove = 0;
         }
         clampScroll();
-        int viewport = this.height - 8 - listTop();
-        if (!loading && nextCursor != null
-                && scroll >= contentHeight - viewport - LOAD_MORE_THRESHOLD) {
+        int viewport = listBottom() - LIST_TOP;
+        if (!loading && nextCursor != null && scroll >= contentHeight - viewport - LOAD_MORE_THRESHOLD) {
             requestPage(nextCursor);
         }
         return true;
@@ -538,129 +655,92 @@ public class FeedScreen extends RetroScreen {
         if (button != 0) {
             return false;
         }
+        if (mouseX < sidebarW()) {
+            return clickSidebar(mouseY);
+        }
 
-        String upd = updateLabel();
-        if (upd != null && UpdateChecker.downloadUrl() != null
-                && mouseY >= updateChipY() && mouseY < updateChipY() + RetroUi.CHIP_H
-                && mouseX >= PAD && mouseX < PAD + RetroUi.chipWidth(this.font, upd)) {
-            ConfirmLinkScreen.confirmLinkNow(this, UpdateChecker.downloadUrl());
+        int x = contentLeft();
+        if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
+            int tx = x;
+            for (Tab tab : tabs()) {
+                int w = RetroUi.chipWidth(this.font, tab.label());
+                if (mouseX >= tx && mouseX < tx + w) {
+                    if (tab.mine()) {
+                        mineOnly = !mineOnly;
+                        filter = null;
+                        refresh();
+                    } else {
+                        setFilter(tab.type());
+                    }
+                    return true;
+                }
+                tx += w + TAB_GAP;
+            }
+        }
+        if (mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H && mouseX >= x && mouseX < x + contentWidth()) {
+            this.minecraft.setScreen(new ComposeScreen(this));
             return true;
         }
 
-        String notifLabel = "!" + NotificationPoller.unreadCount();
-        int nx = hdrNotifX(notifLabel);
-        int nw = RetroUi.chipWidth(this.font, notifLabel);
-        if (mouseY >= HDR_Y && mouseY < HDR_Y + RetroUi.CHIP_H
-                && mouseX >= nx && mouseX < nx + nw) {
-            this.minecraft.setScreen(new NotificationsScreen(this));
-            return true;
-        }
-
-        if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
-            String mine = Component.translatable("feed.screen.feed.tab.mine").getString();
-            int mw = RetroUi.chipWidth(this.font, mine);
-            if (mouseX >= 8 && mouseX < 8 + mw) {
-                mineOnly = !mineOnly;
-                if (mineOnly) {
-                    filter = null;
-                }
-                refresh();
-                return true;
-            }
-        }
-
-        if (mouseY >= TABS_Y && mouseY < TABS_Y + RetroUi.CHIP_H) {
-            String all = Component.translatable("feed.screen.feed.tab.all").getString();
-            int x = tabsStartX();
-            int w = RetroUi.chipWidth(this.font, all);
-            if (mouseX >= x && mouseX < x + w) {
-                setFilter(null);
-                return true;
-            }
-            x += w + TAB_GAP;
-            for (PostType type : PostType.values()) {
-                w = RetroUi.chipWidth(this.font, type.prefix);
-                if (mouseX >= x && mouseX < x + w) {
-                    setFilter(type);
-                    return true;
-                }
-                x += w + TAB_GAP;
-            }
-        }
-
-        if (tagFilter != null && mouseY >= HEADER_H && mouseY < HEADER_H + RetroUi.CHIP_H) {
-            int w = RetroUi.chipWidth(this.font, tagLabel());
-            if (mouseX >= contentLeft() && mouseX < contentLeft() + w) {
-                tagFilter = null;
-                refresh();
-                return true;
-            }
-        }
-
-        if (searchOpen) {
-            int sx = contentLeft();
-            int sy = TABS_Y + 18;
-            int rowY = sy + SEARCH_H + (searchBox.getValue().isBlank() ? 12 : 2);
-            for (FeedApiClient.TagCount tc : suggestions) {
-                if (mouseX >= sx && mouseX <= sx + contentWidth()
-                        && mouseY >= rowY && mouseY < rowY + SUGG_ROW_H) {
-                    applyTag(tc.tag());
-                    return true;
-                }
-                rowY += SUGG_ROW_H;
-            }
-        }
-
-        int top = listTop();
-        if (pendingNewAbove > 0 && mouseY >= top && mouseY < top + STATS_BLOCK) {
-            String label = Component.translatable("feed.screen.feed.new_above", pendingNewAbove).getString();
-            int lw = this.font.width(label);
-            int lx = this.width / 2 - lw / 2;
-            int ny = top + STATS_BLOCK - scroll - 14;
-            if (mouseX >= lx - 4 && mouseX <= lx + lw + 4
-                    && mouseY >= ny - 2 && mouseY <= ny + 10) {
+        int top = LIST_TOP;
+        if (pendingNewAbove > 0) {
+            int lw = RetroUi.chipWidth(this.font, newAboveLabel());
+            int lx = x + contentWidth() / 2 - lw / 2;
+            if (mouseX >= lx && mouseX < lx + lw && mouseY >= top + 2 && mouseY < top + 2 + RetroUi.CHIP_H) {
                 scroll = 0;
                 pendingNewAbove = 0;
-                clampScroll();
                 return true;
             }
         }
-
-        if (mouseY >= top && mouseY < this.height - 8) {
+        if (mouseY >= top && mouseY < listBottom()) {
             for (Row row : rows) {
                 int y = top + row.y() - scroll;
                 if (mouseY < y || mouseY >= y + row.height()) {
                     continue;
                 }
-                if (mouseX < contentLeft() || mouseX >= contentLeft() + contentWidth()) {
+                if (mouseX < x || mouseX >= x + contentWidth()) {
                     break;
                 }
-                return clickInsideCard(row, contentLeft(), y, mouseX, mouseY);
+                return clickInsideCard(row, x, y, mouseX, mouseY);
             }
         }
         return false;
     }
 
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (searchOpen && getFocused() == searchBox
-                && (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)) {
-            if (!suggestions.isEmpty()) {
-                applyTag(suggestions.get(0).tag());
-            } else if (!searchBox.getValue().isBlank()) {
-                applyTag(searchBox.getValue().trim());
+    private boolean clickSidebar(double mouseY) {
+        int y = SB_TOP;
+        for (Item it : topItems()) {
+            if (mouseY >= y - 2 && mouseY < y + SB_ROW - 2) {
+                if (it.action() != null) {
+                    it.action().run();
+                }
+                return true;
             }
+            y += SB_ROW;
+        }
+        int listTop = communitiesTop() + 12;
+        int bottom = sidebarBottom();
+        if (mouseY >= listTop && mouseY < bottom) {
+            y = listTop - sbScroll;
+            for (Item it : communityItems()) {
+                if (mouseY >= y - 2 && mouseY < y + SB_ROW - 2) {
+                    if (it.action() != null) {
+                        it.action().run();
+                    }
+                    return true;
+                }
+                y += SB_ROW;
+            }
+        }
+        if (updateLabel() != null && UpdateChecker.downloadUrl() != null && mouseY >= bottom + 2 && mouseY < bottom + 2 + RetroUi.CHIP_H) {
+            ConfirmLinkScreen.confirmLinkNow(this, UpdateChecker.downloadUrl());
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    private void applyTag(String tag) {
-        tagFilter = tag.toLowerCase().replace("#", "");
-        searchOpen = false;
-        searchBox.setVisible(false);
-        suggestions = new ArrayList<>();
-        refresh();
+        if (mouseY >= this.height - 28) {
+            this.minecraft.setScreen(new ProfileScreen(this));
+            return true;
+        }
+        return false;
     }
 
     private void setFilter(PostType type) {
@@ -673,10 +753,6 @@ public class FeedScreen extends RetroScreen {
             scroll = 0;
             relayout();
         }
-    }
-
-    private boolean isOwn(Post post) {
-        return FeedApiClient.isMine(post.uuid);
     }
 
     private boolean clickInsideCard(Row row, int x, int y, double mouseX, double mouseY) {
@@ -694,23 +770,6 @@ public class FeedScreen extends RetroScreen {
                 rx += w + TAB_GAP;
             }
         }
-        int bodyTop = y + PAD + 16 + 6;
-        int lineH = this.font.lineHeight + 3;
-        int index = (int) ((mouseY - bodyTop) / lineH);
-        if (mouseY >= bodyTop && index >= 0 && index < row.lines().size()) {
-            int lx = x + PAD;
-            for (TagText.Seg seg : TagText.segments(row.lines().get(index))) {
-                int w = this.font.width(seg.text());
-                if (mouseX >= lx && mouseX < lx + w) {
-                    if (seg.tag()) {
-                        applyTag(seg.text().substring(1));
-                        return true;
-                    }
-                    break;
-                }
-                lx += w;
-            }
-        }
         this.minecraft.setScreen(new PostScreen(this, post));
         return true;
     }
@@ -719,51 +778,13 @@ public class FeedScreen extends RetroScreen {
         return post.author == null || post.author.isEmpty() ? "?" : post.author;
     }
 
-    private String tagLabel() {
-        return Component.translatable("feed.screen.feed.tag_clear", tagFilter).getString();
-    }
-
     private void clampScroll() {
-        int viewport = this.height - 8 - listTop();
+        int viewport = listBottom() - LIST_TOP;
         scroll = Math.max(0, Math.min(scroll, Math.max(0, contentHeight - viewport)));
     }
 
-    private int listTop() {
-        int extra = tagFilter == null ? 0 : RetroUi.CHIP_H + 6;
-        if (searchOpen) {
-            extra += SEARCH_H + 4;
-            if (searchBox != null && searchBox.getValue().isBlank() && !suggestions.isEmpty()) {
-                extra += 10;
-            }
-            extra += suggestions.size() * SUGG_ROW_H;
-        }
-        return HEADER_H + extra;
-    }
-
-    private int hdrNewX() {
-        return this.width - HDR_RIGHT - NEW_BTN_W;
-    }
-
-    private int hdrSearchX() {
-        return hdrNewX() - HDR_GAP - SEARCH_BTN_W;
-    }
-
-    private int hdrNotifX(String label) {
-        return hdrSearchX() - HDR_GAP - RetroUi.chipWidth(this.font, label);
-    }
-
-    private String profileLabel() {
-        AccountApi.Account a = AccountManager.INSTANCE.account();
-        String handle = a == null ? "@?" : "@" + a.tag();
-        return handle.length() > 14 ? handle.substring(0, 13) + "\u2026" : handle;
-    }
-
-    private int profileButtonWidth() {
-        return this.font.width(profileLabel()) + 10;
-    }
-
-    private int updateChipY() {
-        return HDR_Y + SEARCH_BTN_H + 4;
+    private String tr(String key) {
+        return Component.translatable(key).getString();
     }
 
     /** Null when no update notice should be shown. */

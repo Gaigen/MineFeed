@@ -43,14 +43,19 @@ public final class FeedApiClient {
     public record TagCount(String tag, int count) {}
 
     public record Notif(String id, String postId, String postText,
-                          String author, String text, String createdAt) {}
+                          String author, String text, String createdAt,
+                          String kind, String communityId, String communityName) {
+        public Notif(String id, String postId, String postText, String author, String text, String createdAt) {
+            this(id, postId, postText, author, text, createdAt, null, null, null);
+        }
+    }
 
     public record NotificationsResult(List<Notif> notifications, String latest) {}
 
     public record FeedPage(FeedResponse body, boolean notModified) {}
 
-    /** Server time of the last full first-page load, used as the /v2/sync cursor. */
-    private volatile long feedSince;
+    /** Server time of the last full first-page load per space, used as the /v2/sync cursor. */
+    private final Map<String, Long> feedSince = new ConcurrentHashMap<>();
     private final Map<String, Long> commentSince = new ConcurrentHashMap<>();
 
     private FeedApiClient() {
@@ -92,27 +97,33 @@ public final class FeedApiClient {
     // ---------- feed ----------
 
     public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine) {
-        return fetchFeed(cursor, limit, tag, mine, false);
+        return fetchFeed("global", cursor, limit, mine, false);
+    }
+
+    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
+        return fetchFeed("global", cursor, limit, mine, fresh);
     }
 
     /** fresh = live poll of the first page: asks /v2/sync first and reloads only on changes. */
-    public CompletableFuture<FeedPage> fetchFeed(String cursor, int limit, String tag, boolean mine, boolean fresh) {
+    public CompletableFuture<FeedPage> fetchFeed(String space, String cursor, int limit, boolean mine, boolean fresh) {
+        String sp = space == null ? "global" : space;
         boolean first = cursor == null || cursor.isEmpty();
-        if (fresh && first && feedSince > 0) {
-            return call("GET", "/v2/sync?space=global&since=" + feedSince, null).thenCompose(s -> {
+        Long since = feedSince.get(sp);
+        if (fresh && first && since != null && since > 0) {
+            return call("GET", "/v2/sync?space=" + sp + "&since=" + since, null).thenCompose(s -> {
                 boolean changed = bool(s, "reset") || s.getAsJsonArray("posts").size() > 0;
                 if (!changed) {
-                    feedSince = s.get("now").getAsLong();
+                    feedSince.put(sp, s.get("now").getAsLong());
                     return CompletableFuture.completedFuture(new FeedPage(null, true));
                 }
-                return loadFeed(null, limit, mine);
+                return loadFeed(sp, null, limit, mine);
             });
         }
-        return loadFeed(cursor, limit, mine);
+        return loadFeed(sp, cursor, limit, mine);
     }
 
-    private CompletableFuture<FeedPage> loadFeed(String cursor, int limit, boolean mine) {
-        StringBuilder path = new StringBuilder("/v2/feed?space=global&limit=").append(limit);
+    private CompletableFuture<FeedPage> loadFeed(String space, String cursor, int limit, boolean mine) {
+        StringBuilder path = new StringBuilder("/v2/feed?space=").append(space).append("&limit=").append(limit);
         if (cursor != null && !cursor.isEmpty()) {
             path.append("&before=").append(cursor);
         }
@@ -122,7 +133,7 @@ public final class FeedApiClient {
         boolean first = cursor == null || cursor.isEmpty();
         return call("GET", path.toString(), null).thenApply(o -> {
             if (first) {
-                feedSince = o.get("now").getAsLong();
+                feedSince.put(space, o.get("now").getAsLong());
             }
             FeedResponse r = new FeedResponse();
             r.posts = new ArrayList<>();
@@ -135,8 +146,12 @@ public final class FeedApiClient {
     }
 
     public CompletableFuture<Post> createPost(String text, PostType type) {
+        return createPost("global", text, type);
+    }
+
+    public CompletableFuture<Post> createPost(String space, String text, PostType type) {
         JsonObject body = new JsonObject();
-        body.addProperty("space", "global");
+        body.addProperty("space", space == null ? "global" : space);
         body.addProperty("type", type.id);
         body.addProperty("text", text);
         return call("POST", "/v2/posts", body).thenApply(o -> toPost(o.getAsJsonObject("post")));
@@ -247,11 +262,23 @@ public final class FeedApiClient {
                 latest = Math.max(latest, id);
                 JsonObject actor = n.getAsJsonObject("actor");
                 String kind = str(n, "kind");
-                String text = "react".equals(kind)
-                        ? Component.translatable("feed.notif.react", n.get("count").getAsInt()).getString()
-                        : str(n, "text");
-                list.add(new Notif(String.valueOf(id), str(n, "postId"), str(n, "postText"),
-                        actorName(actor), text, iso(n.get("updatedAt").getAsLong())));
+                String community = str(n, "communityName");
+                String raw = str(n, "text");
+                String postText = str(n, "postText");
+                String text = switch (kind == null ? "" : kind) {
+                    case "react" -> Component.translatable("feed.notif.react", n.get("count").getAsInt()).getString();
+                    case "request" -> Component.translatable("feed.notif.request", nz(community, raw)).getString();
+                    case "accepted" -> Component.translatable("feed.notif.accepted", nz(community, raw)).getString();
+                    case "app_approved" -> Component.translatable("feed.notif.app_approved", nz(community, raw)).getString();
+                    case "app_rejected" -> Component.translatable("feed.notif.app_rejected", nz(raw, "-")).getString();
+                    default -> raw;
+                };
+                if (postText == null && community != null) {
+                    postText = community;
+                }
+                list.add(new Notif(String.valueOf(id), str(n, "postId"), postText,
+                        actorName(actor), text, iso(n.get("updatedAt").getAsLong()),
+                        kind, str(n, "communityId"), community));
             }
             return new NotificationsResult(list, latest > 0 ? String.valueOf(latest) : null);
         });
@@ -284,6 +311,7 @@ public final class FeedApiClient {
         p.myReaction = my >= 0 && my < 2 ? keys.get(my) : null;
         p.tags = List.of();
         p.solved = bool(o, "solved");
+        p.space = str(o, "space");
         return p;
     }
 
@@ -314,6 +342,10 @@ public final class FeedApiClient {
         }
         String nick = str(a, "nick");
         return nick == null || nick.isEmpty() ? "?" : nick;
+    }
+
+    private static String nz(String a, String b) {
+        return a == null || a.isEmpty() ? (b == null ? "" : b) : a;
     }
 
     private static String iso(long ms) {

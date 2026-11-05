@@ -77,7 +77,7 @@ public class ComposeScreen extends Screen {
         sending = true;
         sendButton.active = false;
         status = null;
-        FeedApiClient.INSTANCE.createPost(text, selected).whenComplete((post, ex) ->
+        FeedApiClient.INSTANCE.createPost(parent.space(), text, selected).whenComplete((post, ex) ->
                 this.minecraft.execute(() -> {
                     sending = false;
                     sendButton.active = true;
@@ -143,6 +143,12 @@ public class ComposeScreen extends Screen {
                 Component.translatable(selected.composeTitleKey()).getString().toUpperCase(),
                 x + 10, y + 9, selected.accent);
         Component hint = Component.translatable("feed.screen.compose.hint");
+        var community = parent.community();
+        if (community != null && status == null && !sending) {
+            String where = Component.translatable("feed.compose.in", community.name()).getString();
+            g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, where, w - 20),
+                    x + 10, y + PANEL_H - 16, RetroUi.GRAY, false);
+        }
         g.drawString(this.font, hint, x + w - 10 - this.font.width(hint), y + 9, RetroUi.GRAY, false);
 
         int cx = x + 10;

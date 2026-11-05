@@ -119,16 +119,15 @@ test("players apply, staff approve in Discord", async () => {
   assert.equal(roles["d-alice"].size, 2); // mod + member role
   assert.equal((await api("POST", `/v2/bot/apply/${appId}/decide`, { bot: true, body: { approve: false } })).data.code, "already_decided");
 
-  // pinned welcome post with the creator + the "about" comment
-  const post = await env.DB.prepare("SELECT * FROM posts WHERE space = ?").bind(d.data.community.id).first();
-  assert.equal(post.pinned, 1);
-  assert.equal(post.author_id, a.id);
-  assert.match(post.text, /Создатель: alice \(@alice\)/);
-  const com = await env.DB.prepare("SELECT text FROM comments WHERE post_id = ?").bind(post.id).first();
-  assert.match(com.text, /О проекте/);
-  assert.match(com.text, /example\.com/);
+  // welcome thread in Discord only (creator + "about" comment), pinned and locked; nothing in the mod feed
+  const hooks = calls.filter((c) => c.m === "POST" && c.p.startsWith("/webhooks/"));
+  assert.match(hooks[0].body.content, /Создатель: alice \(@alice\)/);
+  assert.match(hooks[1].body.content, /О проекте/);
+  assert.match(hooks[1].body.content, /example\.com/);
+  const lock = calls.find((c) => c.m === "PATCH" && c.body && c.body.locked);
+  assert.deepEqual(lock.body, { flags: 2, locked: true });
   const feed = (await api("GET", `/v2/feed?space=${d.data.community.id}`, { key: a.key })).data;
-  assert.equal(feed.posts[0].pinned, true);
+  assert.equal(feed.posts.length, 0);
   // notification, DM, staff message without buttons
   const n = await env.DB.prepare("SELECT kind FROM notifications WHERE account_id = ?").bind(a.id).first();
   assert.equal(n.kind, "app_approved");

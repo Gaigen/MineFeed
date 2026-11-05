@@ -25,8 +25,8 @@ function lang(request) {
   return /^\s*ru\b/i.test(request.headers.get("accept-language") || "") ? "ru" : "en";
 }
 
-function say(request, status, id, vars = {}) {
-  const l = lang(request);
+/** l: "ru" | "en" — the game language from the flow, else the browser language. */
+function say(l, status, id, vars = {}) {
   const [title, body] = PAGES[id][l];
   return page(status, title, esc(body).replace(/\{(\w+)\}/g, (_, k) => esc(vars[k] ?? "")), l);
 }
@@ -51,8 +51,9 @@ export async function start(request, env, body, account, now) {
   const pollSecret = base64url(randomBytes(32));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM discord_flows WHERE created_at < ?").bind(now - FLOW_TTL),
-    env.DB.prepare("INSERT INTO discord_flows (state, kind, account_id, poll_hash, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(state, kind, kind === "link" ? account.id : null, await sha256Hex(pollSecret), now),
+    env.DB.prepare("INSERT INTO discord_flows (state, kind, account_id, poll_hash, created_at, lang) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(state, kind, kind === "link" ? account.id : null, await sha256Hex(pollSecret), now,
+        body.lang ? (/^\s*ru/i.test(String(body.lang)) ? "ru" : "en") : lang(request)),
   ]);
   const origin = new URL(request.url).origin;
   return { state, pollSecret, url: `${origin}/v2/discord/go/${state}`, expiresAt: now + FLOW_TTL };
@@ -61,9 +62,9 @@ export async function start(request, env, body, account, now) {
 /** GET /v2/discord/go/:state — short link the mod opens; redirects to Discord's consent page. */
 export async function go(request, env, state, now) {
   configured(env);
-  const flow = await env.DB.prepare("SELECT state, created_at, status FROM discord_flows WHERE state = ?").bind(state).first();
+  const flow = await env.DB.prepare("SELECT state, created_at, status, lang FROM discord_flows WHERE state = ?").bind(state).first();
   if (!flow || flow.created_at + FLOW_TTL < now || flow.status !== "pending") {
-    return say(request, 410, "expired");
+    return say((flow && flow.lang) || lang(request), 410, "expired");
   }
   const q = new URLSearchParams({
     response_type: "code",
@@ -126,42 +127,43 @@ export async function callback(request, env, now) {
   const url = new URL(request.url);
   const state = url.searchParams.get("state") || "";
   const flow = await env.DB.prepare("SELECT * FROM discord_flows WHERE state = ?").bind(state).first();
+  const l = (flow && flow.lang) || lang(request);
   if (!flow || flow.created_at + FLOW_TTL < now || flow.status !== "pending") {
-    return say(request, 410, "expired");
+    return say(l, 410, "expired");
   }
   if (url.searchParams.get("error")) {
     await finish(env, state, "error", "denied", "Доступ не разрешён");
-    return say(request, 200, "denied");
+    return say(l, 200, "denied");
   }
   const user = await discordUser(request, env, url.searchParams.get("code") || "");
   if (!user) {
     await finish(env, state, "error", "discord_failed", "Discord не ответил, попробуй ещё раз");
-    return say(request, 502, "failed");
+    return say(l, 502, "failed");
   }
   const owner = await env.DB.prepare("SELECT id, tag, banned FROM accounts WHERE discord_id = ?").bind(user.id).first();
 
   if (flow.kind === "login") {
     if (!owner) {
       await finish(env, state, "error", "not_linked", "К этому Discord не привязан профиль MineFeed");
-      return say(request, 404, "not_linked");
+      return say(l, 404, "not_linked");
     }
     if (owner.banned) {
       await finish(env, state, "error", "banned", "Аккаунт заблокирован");
-      return say(request, 403, "banned");
+      return say(l, 403, "banned");
     }
     await finish(env, state, "done", null, null, owner.id);
-    return say(request, 200, "login_ok", { tag: owner.tag });
+    return say(l, 200, "login_ok", { tag: owner.tag });
   }
 
   // link
   if (owner && owner.id !== flow.account_id) {
     await finish(env, state, "error", "discord_taken", "Этот Discord уже привязан к другому профилю");
-    return say(request, 409, "taken");
+    return say(l, 409, "taken");
   }
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(flow.account_id).first();
   if (!acc) {
     await finish(env, state, "error", "not_found", "Профиль не найден");
-    return say(request, 404, "no_profile");
+    return say(l, 404, "no_profile");
   }
   // your current tag becomes protected if it is your Discord handle
   const protect = user.username && user.username === acc.tag ? 1 : acc.tag_protected && acc.discord_id === user.id ? 1 : 0;
@@ -171,14 +173,14 @@ export async function callback(request, env, now) {
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) {
       await finish(env, state, "error", "discord_taken", "Этот Discord уже привязан к другому профилю");
-      return say(request, 409, "taken");
+      return say(l, 409, "taken");
     }
     throw e;
   }
   if (acc.discord_id && acc.discord_id !== user.id) await syncRoles(env, acc.id, acc.discord_id, false);
   await syncRoles(env, acc.id, user.id, true);
   await finish(env, state, "done");
-  return say(request, 200, "link_ok", { tag: acc.tag });
+  return say(l, 200, "link_ok", { tag: acc.tag });
 }
 
 /** POST /v2/discord/poll {state, pollSecret} — one-time result for the mod. */

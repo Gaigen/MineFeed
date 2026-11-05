@@ -249,7 +249,7 @@ public final class NotificationPoller {
                 event.setCanceled(true);
                 FeedApiClient.Notif n = t.notif;
                 toasts.remove(t);
-                mc.execute(() -> PostOpener.open(mc, null, n.postId()));
+                mc.execute(() -> PostOpener.open(mc, null, n));
                 return;
             }
         }
@@ -281,6 +281,15 @@ public final class NotificationPoller {
     }
 
     /** Only when the user opens that thread. Clears current items for the post; future ones still arrive. */
+    public static void markNotifRead(String id) {
+        if (id == null) return;
+        toastedIds.add(id);
+        trimToasted();
+        unread.removeIf(n -> id.equals(n.id()));
+        toasts.removeIf(t -> id.equals(t.notif.id()));
+        saveSync();
+    }
+
     public static void markRead(String postId) {
         if (postId == null) return;
         for (FeedApiClient.Notif n : unread) {

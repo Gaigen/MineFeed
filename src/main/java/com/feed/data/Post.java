@@ -18,6 +18,7 @@ public class Post {
     public String myReaction;
     public List<String> tags;
     public boolean solved;
+    public String space;    // "global" or community id
 
     public Post() {
     }

@@ -11,6 +11,30 @@ public final class PostOpener {
     private PostOpener() {
     }
 
+    /** Notification click: the post, or the community for join/application notifications. */
+    public static void open(Minecraft mc, FeedScreen parent, FeedApiClient.Notif n) {
+        if (n == null) {
+            return;
+        }
+        if (n.postId() != null && !n.postId().isEmpty()) {
+            open(mc, parent, n.postId());
+            return;
+        }
+        NotificationPoller.markNotifRead(n.id());
+        if (n.communityId() != null) {
+            FeedScreen feed = parent != null ? parent : new FeedScreen();
+            CommunityApi.mine().whenComplete((m, ex) -> mc.execute(() -> {
+                feed.switchSpace(CommunityApi.cachedById(n.communityId()) != null ? n.communityId() : "global");
+                if ("request".equals(n.kind())) {
+                    CommunityApi.Community c = CommunityApi.cachedById(n.communityId());
+                    mc.setScreen(c != null ? new com.feed.client.screen.CommunityScreen(feed, c) : feed);
+                } else {
+                    mc.setScreen(feed);
+                }
+            }));
+        }
+    }
+
     public static void open(Minecraft mc, FeedScreen parent, String postId) {
         if (postId == null || postId.isEmpty()) {
             return;
