@@ -146,20 +146,20 @@ public class ProfileScreen extends ShellScreen {
 
         avatarY = y;
         avatarButton = button(bx, y, bw, "feed.account.avatar.change", b -> cycleAvatar());
-        y += 26;
+        y += 24;
 
         discordY = y;
         discordButton = button(bx, y, bw, a.discordLinked() ? "feed.account.discord.unlink" : "feed.account.discord.link",
                 b -> discordAction());
-        y += 26;
+        y += 24;
 
         hiddenY = y;
         hiddenButton = button(bx, y, bw, "feed.hide.list", b -> this.minecraft.setScreen(new HiddenPlayersScreen(home()).from(this)));
-        y += 26;
+        y += 24;
 
         nsfwY = y;
         nsfwButton = button(bx, y, bw, a.showNsfw() ? "feed.nsfw.turn_off" : "feed.nsfw.turn_on", b -> toggleNsfw());
-        y += 26;
+        y += 24;
 
         accountY = y;
         int ax = fx;
