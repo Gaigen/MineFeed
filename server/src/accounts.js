@@ -255,14 +255,6 @@ export async function logout(env, account) {
   return { ok: true };
 }
 
-export async function publicProfile(env, rawTag, now) {
-  const tag = normalizeTag(rawTag);
-  const acc = await env.DB.prepare("SELECT * FROM accounts WHERE tag = ? AND banned = 0").bind(tag).first();
-  if (!acc) throw new HttpError(404, "not_found", "Пользователь не найден");
-  const { id, tag: t, nick, createdAt, tagProtected } = publicAccount(acc, now);
-  return { user: { id, tag: t, nick, createdAt, tagProtected } };
-}
-
 /** Ban check at sign-in: lifts an expired ban, otherwise explains it (until/reason for the mod). */
 export async function checkBan(env, row, now) {
   if (!row.banned) return;
