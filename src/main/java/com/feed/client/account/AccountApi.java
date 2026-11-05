@@ -29,7 +29,8 @@ public final class AccountApi {
 
     public record Account(String id, String tag, String nick, long createdAt,
                           boolean tagProtected, boolean discordLinked, Long canChangeTagAt,
-                          String discordUsername, String lostTag, String claimableTag) {}
+                          String discordUsername, String lostTag, String claimableTag,
+                          String avatarChoice, String avatar, String skin, boolean hasDiscordAvatar) {}
 
     public record Session(Account account, String key, String recoveryCode) {}
 
@@ -124,6 +125,20 @@ public final class AccountApi {
     public CompletableFuture<Account> setNick(String nick) {
         JsonObject body = new JsonObject();
         body.addProperty("nick", nick);
+        return send("PATCH", "/v2/me", body, true).thenApply(AccountApi::account);
+    }
+
+    /** Minecraft profile UUID of the signed-in player: the skin used as the avatar. */
+    public CompletableFuture<Account> setSkin(String uuid) {
+        JsonObject body = new JsonObject();
+        body.addProperty("skin", uuid);
+        return send("PATCH", "/v2/me", body, true).thenApply(AccountApi::account);
+    }
+
+    /** skin | discord | none */
+    public CompletableFuture<Account> setAvatar(String choice) {
+        JsonObject body = new JsonObject();
+        body.addProperty("avatar", choice);
         return send("PATCH", "/v2/me", body, true).thenApply(AccountApi::account);
     }
 

@@ -32,7 +32,7 @@ export function makeFilter({ guildId, categories, channels }) {
         if (!th) return null;
         const out = {
           id: d.id, channel_id: d.channel_id, content: d.content, webhook_id: d.webhook_id,
-          author: d.author && { id: d.author.id, username: d.author.username, global_name: d.author.global_name, bot: !!d.author.bot },
+          author: d.author && { id: d.author.id, username: d.author.username, global_name: d.author.global_name, avatar: d.author.avatar || null, bot: !!d.author.bot },
           member: d.member && { nick: d.member.nick },
           mentions: (d.mentions || []).map((u) => ({ id: u.id, username: u.username, global_name: u.global_name })),
           attachments: (d.attachments || []).map((a) => ({ url: a.url, content_type: a.content_type, width: a.width, height: a.height })),

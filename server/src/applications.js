@@ -6,17 +6,14 @@ import { dapi } from "./dapi.js";
 import * as C from "./communities.js";
 import * as F from "./feed.js";
 import * as N from "./notify.js";
+import { welcomeContent } from "./welcome.js";
 
 const T = {
   en: {
-    welcome: (a, o) => `Welcome to «${a.name}»!${a.description ? "\n" + a.description : ""}\n\nCreator: ${o.nick} (@${o.tag})`,
-    about: "About the project", links: "Links",
     dmOk: (a) => `✅ Your MineFeed community «${a.name}» is approved and ready. Open MineFeed in the game to invite people.`,
     dmNo: (a) => `❌ Your MineFeed community application «${a.name}» was declined.${a.reason ? "\nReason: " + a.reason : ""}`,
   },
   ru: {
-    welcome: (a, o) => `Добро пожаловать в «${a.name}»!${a.description ? "\n" + a.description : ""}\n\nСоздатель: ${o.nick} (@${o.tag})`,
-    about: "О проекте", links: "Ссылки",
     dmOk: (a) => `✅ Сообщество «${a.name}» в MineFeed одобрено и создано. Открой MineFeed в игре, чтобы пригласить людей.`,
     dmNo: (a) => `❌ Заявка на сообщество «${a.name}» в MineFeed отклонена.${a.reason ? "\nПричина: " + a.reason : ""}`,
   },
@@ -142,10 +139,10 @@ export async function decide(env, id, body, now) {
 
   if (body.approve) {
     if (!owner || owner.banned) throw new HttpError(409, "no_owner", "The applicant's MineFeed account is gone or banned");
-    community = (await C.createCommunity(env, owner, { name: a.name, description: a.description }, now)).community;
-    const comment = [a.about && `**${t.about}:**\n${a.about}`, a.links && `**${t.links}:** ${a.links}`].filter(Boolean).join("\n\n");
+    community = (await C.createCommunity(env, owner, { name: a.name, description: a.description, about: a.about, links: a.links, lang: a.lang }, now)).community;
     try {
-      await F.publishWelcome(env, community.id, owner, { title: a.name, text: t.welcome(a, owner), comment: comment || null }, now);
+      const w = await F.publishWelcome(env, community.id, owner, welcomeContent({ ...a, name: community.name, description: community.description }, owner), now);
+      await env.DB.prepare("UPDATE communities SET welcome_thread_id = ?, welcome_comment_id = ? WHERE id = ?").bind(w.thread, w.comment, community.id).run();
     } catch (e) {
       console.error("welcome post failed", e.message); // the community itself is ready
     }

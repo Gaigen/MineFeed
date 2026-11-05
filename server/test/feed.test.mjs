@@ -217,7 +217,7 @@ test("bot events", async () => {
   const full = await api("GET", `/v2/posts/${post.id}`, { key: a.key });
   assert.equal(full.data.post.comments, 2);
   assert.equal(full.data.comments[0].text, "hey @max :pog:");
-  assert.deepEqual(full.data.comments[0].author, { discord: true, nick: "Zed" });
+  assert.deepEqual(full.data.comments[0].author, { discord: true, nick: "Zed", avatar: null });
   assert.equal(full.data.comments[1].author.tag, "alice");
   const n = await api("GET", "/v2/notifications", { key: a.key });
   assert.equal(n.data.items.length, 1); // own Discord comment doesn't notify

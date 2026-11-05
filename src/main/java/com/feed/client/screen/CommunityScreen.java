@@ -5,6 +5,7 @@ import com.feed.client.FeedApiClient;
 import com.feed.client.FeedUtil;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.network.chat.Component;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
@@ -38,6 +39,12 @@ public class CommunityScreen extends ModalScreen {
     private int contentH;
     private EditBox nameBox;
     private EditBox descBox;
+    private MultiLineEditBox aboutBox;
+    private EditBox linksBox;
+    /** Unsaved settings survive a resize: name, description, about, links. */
+    private String[] draft;
+    private static final int ROW = 10 + AccountUi.FIELD_H + 4;
+    private static final int ABOUT_H = 44;
 
     public CommunityScreen(FeedScreen parent, CommunityApi.Community community) {
         super(Component.empty(), parent);
@@ -54,14 +61,35 @@ public class CommunityScreen extends ModalScreen {
     protected void init() {
         layout(400, 280);
         if (tab == Tab.SETTINGS && community.isOwner()) {
+            if (draft == null) {
+                draft = new String[] {community.name(), nz(community.description()), nz(community.about()), nz(community.links())};
+            }
+            int x = innerX();
+            int w = innerW();
             int y = listTop() + 10;
-            nameBox = addField(AccountUi.field(this.font, innerX(), y, innerW(), 32, Component.translatable("feed.manage.settings.name")));
-            y += AccountUi.FIELD_H + 4 + 10;
-            descBox = addField(AccountUi.field(this.font, innerX(), y, innerW(), 200, Component.translatable("feed.manage.settings.description")));
-            nameBox.setValue(community.name());
-            descBox.setValue(community.description() == null ? "" : community.description());
+            nameBox = addField(AccountUi.field(this.font, x, y, w, 32, Component.translatable("feed.manage.settings.name")));
+            y += ROW;
+            descBox = addField(AccountUi.field(this.font, x, y, w, 200, Component.translatable("feed.manage.settings.description")));
+            y += ROW;
+            aboutBox = new MultiLineEditBox(this.font, x, y, w, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
+            aboutBox.setCharacterLimit(1000);
+            addRenderableWidget(aboutBox);
+            y += ABOUT_H + 4 + 10;
+            linksBox = addField(AccountUi.field(this.font, x, y, w, 300, Component.translatable("feed.apply.links_hint")));
+            nameBox.setValue(draft[0]);
+            descBox.setValue(draft[1]);
+            aboutBox.setValue(draft[2]);
+            linksBox.setValue(draft[3]);
+            nameBox.setResponder(v -> draft[0] = v);
+            descBox.setResponder(v -> draft[1] = v);
+            aboutBox.setValueListener(v -> draft[2] = v);
+            linksBox.setResponder(v -> draft[3] = v);
         }
         load();
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 
     private List<Tab> tabs() {
@@ -332,13 +360,17 @@ public class CommunityScreen extends ModalScreen {
         int by = listBottom() - BTN_H - 6;
         if (community.isOwner()) {
             g.drawString(this.font, tr("feed.manage.settings.name"), x, y, RetroUi.FG, false);
-            y += 10 + AccountUi.FIELD_H + 4;
+            y += ROW;
             g.drawString(this.font, tr("feed.manage.settings.description"), x, y, RetroUi.FG, false);
-            y += 10 + AccountUi.FIELD_H + 6;
+            y += ROW;
+            g.drawString(this.font, tr("feed.manage.settings.about"), x, y, RetroUi.FG, false);
+            y += 10 + ABOUT_H + 4;
+            g.drawString(this.font, tr("feed.manage.settings.links"), x, y, RetroUi.FG, false);
             String save = tr("feed.manage.settings.save");
-            button(g, save, x, y, 0, BTN_H, RetroUi.ACCENT, false, mouseX, mouseY, () -> {
+            button(g, save, x, by, 0, BTN_H, RetroUi.ACCENT, false, mouseX, mouseY, () -> {
                 busy = true;
-                CommunityApi.update(community.id(), nameBox.getValue().trim(), descBox.getValue().trim())
+                CommunityApi.update(community.id(), nameBox.getValue().trim(), descBox.getValue().trim(),
+                                aboutBox.getValue().trim(), linksBox.getValue().trim())
                         .whenComplete((c, ex) -> this.minecraft.execute(() -> {
                             busy = false;
                             if (ex != null) {
@@ -351,14 +383,21 @@ public class CommunityScreen extends ModalScreen {
                         }));
             });
             String del = tr("feed.manage.settings.delete");
-            button(g, del, x, by, 0, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
+            button(g, del, x + innerW() - buttonWidth(del), by, 0, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
                     new RetroConfirmScreen(this, Component.translatable("feed.manage.settings.delete"),
                             Component.translatable("feed.manage.settings.delete_confirm", community.name()),
                             Component.translatable("feed.manage.settings.delete"), true,
                             () -> leaveOrDelete(CommunityApi.remove(community.id())))));
         } else {
-            AccountUi.drawWrapped(g, this.font, community.description() == null || community.description().isEmpty()
-                    ? tr("feed.manage.settings.no_description") : community.description(), x, y, innerW(), RetroUi.FG);
+            String info = community.description() == null || community.description().isEmpty()
+                    ? tr("feed.manage.settings.no_description") : community.description();
+            if (!nz(community.about()).isEmpty()) {
+                info += "\n\n" + tr("feed.manage.settings.about") + ":\n" + community.about();
+            }
+            if (!nz(community.links()).isEmpty()) {
+                info += "\n\n" + tr("feed.manage.settings.links") + ": " + community.links();
+            }
+            AccountUi.drawWrapped(g, this.font, info, x, y, innerW(), RetroUi.FG);
             String leave = tr("feed.manage.settings.leave");
             button(g, leave, x, by, 0, BTN_H, RetroUi.ERROR, false, mouseX, mouseY, () -> this.minecraft.setScreen(
                     new RetroConfirmScreen(this, Component.translatable("feed.manage.settings.leave"),

@@ -93,6 +93,23 @@ public final class AccountManager {
         refreshedThisSession = true;
         sessionLost = false;
         persist();
+        syncSkin(s.account());
+    }
+
+    /**
+     * Tells the server which Minecraft skin is ours (only for a real Microsoft login:
+     * offline profiles have made-up UUIDs). Other players then see it as the avatar.
+     */
+    private void syncSkin(AccountApi.Account acc) {
+        net.minecraft.client.User user = Minecraft.getInstance().getUser();
+        if (acc == null || user.getType() != net.minecraft.client.User.Type.MSA || user.getProfileId() == null) {
+            return;
+        }
+        String uuid = user.getProfileId().toString().replace("-", "");
+        if (uuid.equals(acc.skin())) {
+            return;
+        }
+        thenOnMain(api.setSkin(uuid), this::updateAccount, e -> {});
     }
 
     public void updateAccount(AccountApi.Account a) {
@@ -124,6 +141,7 @@ public final class AccountManager {
         api.me().whenComplete((acc, ex) -> Minecraft.getInstance().execute(() -> {
             if (ex == null) {
                 updateAccount(acc);
+                syncSkin(acc);
                 if (acc.lostTag() != null) {
                     net.minecraft.client.gui.components.toasts.SystemToast.addOrUpdate(
                             Minecraft.getInstance().getToasts(),

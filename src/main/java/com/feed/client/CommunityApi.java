@@ -19,7 +19,7 @@ import java.util.concurrent.CompletionException;
 public final class CommunityApi {
 
     public record Community(String id, String name, String description, int members, String ownerId,
-                            String role, int unread, int requests) {
+                            String role, int unread, int requests, String about, String links) {
         public boolean isMod() {
             return "owner".equals(role) || "mod".equals(role);
         }
@@ -109,10 +109,12 @@ public final class CommunityApi {
         });
     }
 
-    public static CompletableFuture<Community> update(String id, String name, String description) {
+    public static CompletableFuture<Community> update(String id, String name, String description, String about, String links) {
         JsonObject b = new JsonObject();
         b.addProperty("name", name);
         b.addProperty("description", description);
+        b.addProperty("about", about);
+        b.addProperty("links", links);
         return call("PATCH", "/v2/communities/" + id, b).thenApply(o -> community(o.getAsJsonObject("community")));
     }
 
@@ -252,7 +254,7 @@ public final class CommunityApi {
 
     private static Community community(JsonObject o) {
         return new Community(str(o, "id"), str(o, "name"), str(o, "description"), num(o, "members"), str(o, "ownerId"),
-                str(o, "role"), num(o, "unread"), num(o, "requests"));
+                str(o, "role"), num(o, "unread"), num(o, "requests"), str(o, "about"), str(o, "links"));
     }
 
     private static Code code(JsonObject o) {

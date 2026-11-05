@@ -333,5 +333,11 @@
   "feed.profile.comments": "комментариев: %d",
   "feed.profile.mod": "модератор",
   "feed.profile.settings": "Настройки аккаунта →",
-  "feed.profile.empty": "Постов в общей ленте пока нет."
+  "feed.profile.empty": "Постов в общей ленте пока нет.",
+  "feed.account.avatar.skin": "Аватар: скин",
+  "feed.account.avatar.discord": "Аватар: Discord",
+  "feed.account.avatar.none": "Без аватара",
+  "feed.account.avatar.saved": "Аватар обновлён",
+  "feed.manage.settings.about": "О проекте",
+  "feed.manage.settings.links": "Ссылки"
 }

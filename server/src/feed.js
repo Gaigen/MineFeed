@@ -1,4 +1,5 @@
 // Feed: posts live in Discord forum threads (written by a webhook as the player), D1 is the index.
+import * as A from "./avatars.js";
 import { HttpError } from "./util.js";
 import { rateLimit } from "./accounts.js";
 import { dapi, webhookName } from "./dapi.js";
@@ -13,8 +14,9 @@ export const SYNC_MAX_AGE = 86_400_000; // older cursors must reload the feed
 const PAGE = 20;
 const COMMENTS_PAGE = 50;
 
-const POST_SELECT = `SELECT p.*, a.tag AS a_tag, a.nick AS a_nick FROM posts p LEFT JOIN accounts a ON a.id = p.author_id`;
-const COMMENT_SELECT = `SELECT c.*, a.tag AS a_tag, a.nick AS a_nick FROM comments c LEFT JOIN accounts a ON a.id = c.author_id`;
+const AUTHOR_COLS = "a.tag AS a_tag, a.nick AS a_nick, a.skin AS a_skin, a.avatar AS a_av, a.discord_id AS a_did, a.discord_avatar AS a_dav";
+const POST_SELECT = `SELECT p.*, ${AUTHOR_COLS} FROM posts p LEFT JOIN accounts a ON a.id = p.author_id`;
+const COMMENT_SELECT = `SELECT c.*, ${AUTHOR_COLS} FROM comments c LEFT JOIN accounts a ON a.id = c.author_id`;
 
 // ---------- text ----------
 
@@ -92,6 +94,7 @@ async function postAs(env, space, account, payload, threadId, files) {
     body: {
       ...payload,
       username: webhookName(account.nick, account.tag),
+      ...(A.urlOf(A.keyOf(account)) ? { avatar_url: A.urlOf(A.keyOf(account)) } : {}),
       allowed_mentions: { parse: [] },
     },
   });
@@ -100,8 +103,12 @@ async function postAs(env, space, account, payload, threadId, files) {
 // ---------- output ----------
 
 function author(r) {
-  if (r.author_id) return { id: r.author_id, tag: r.a_tag || null, nick: r.a_nick || "?" };
-  return { discord: true, nick: r.ext_name || "Discord" };
+  if (r.author_id) {
+    const avatar = A.keyOf({ avatar: r.a_av, skin: r.a_skin, discord_id: r.a_did, discord_avatar: r.a_dav });
+    return { id: r.author_id, tag: r.a_tag || null, nick: r.a_nick || "?", avatar };
+  }
+  const [did, hash] = String(r.ext_avatar || "").split("/");
+  return { discord: true, nick: r.ext_name || "Discord", avatar: A.discordKey(did, hash) };
 }
 
 export function postOut(r, my) {
@@ -308,6 +315,7 @@ export async function createPost(env, account, body, now) {
 /**
  * Pinned first post of a new community, written as its owner, plus an optional first comment.
  * System text, so the usual length limits don't apply (Discord max is 2000).
+ * Returns the ids to edit them later: { thread, comment }.
  */
 export async function publishWelcome(env, spaceId, owner, { title, text, comment }, now) {
   // Discord only: the mod doesn't show it. Not indexed in D1, so the bot ignores replies there too.
@@ -318,10 +326,38 @@ export async function publishWelcome(env, spaceId, owner, { title, text, comment
     ...(space.tagIds.talk ? { applied_tags: [space.tagIds.talk] } : {}),
   });
   const id = msg.channel_id;
-  if (comment) await postAs(env, space, owner, { content: comment }, id);
+  const c = comment ? await postAs(env, space, owner, { content: comment }, id) : null;
   // pin + lock: the welcome thread is read-only (Manage Threads can still write)
   await dapi(env, "PATCH", `/channels/${id}`, { body: { flags: 2, locked: true }, allow404: true }).catch(() => {});
-  return id;
+  return { thread: id, comment: c ? c.id : null };
+}
+
+/**
+ * Rewrites the welcome post after the owner edits the community. The comment is edited,
+ * added or removed to match. Returns the comment id that now exists (or null).
+ */
+export async function updateWelcome(env, spaceId, owner, { threadId, commentId }, { title, text, comment }) {
+  const space = await getSpace(env, spaceId);
+  const hook = `/webhooks/${space.webhook_id}/${space.webhook_token}/messages`;
+  const q = `?thread_id=${threadId}`;
+  await dapi(env, "PATCH", `/channels/${threadId}`, { body: { name: threadName(title) }, allow404: true });
+  await dapi(env, "PATCH", `${hook}/${threadId}${q}`, { auth: false, body: { content: text, allowed_mentions: { parse: [] } }, allow404: true });
+  if (commentId && comment) {
+    const r = await dapi(env, "PATCH", `${hook}/${commentId}${q}`, { auth: false, body: { content: comment, allowed_mentions: { parse: [] } }, allow404: true });
+    if (r) return commentId;
+  } else if (commentId) {
+    await dapi(env, "DELETE", `${hook}/${commentId}${q}`, { auth: false, allow404: true });
+    return null;
+  }
+  if (!comment) return null;
+  // the thread is locked: open it for a moment so the webhook may write
+  await dapi(env, "PATCH", `/channels/${threadId}`, { body: { locked: false }, allow404: true });
+  try {
+    const m = await postAs(env, space, owner, { content: comment }, threadId);
+    return m.id;
+  } finally {
+    await dapi(env, "PATCH", `/channels/${threadId}`, { body: { locked: true }, allow404: true }).catch(() => {});
+  }
 }
 
 /** POST /v2/posts/:id/comments {text} */

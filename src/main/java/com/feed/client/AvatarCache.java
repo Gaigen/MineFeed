@@ -48,12 +48,27 @@ public final class AvatarCache {
 
     private AvatarCache() {}
 
-    private static String headUrl(String uuid) {
-        return "https:" + "//mc-heads.net/avatar/" + uuid + "/" + HEAD_SIZE;
+    /**
+     * Keys: "skin:&lt;uuid&gt;" (Minecraft skin via mc-heads), "discord:&lt;id&gt;/&lt;hash&gt;" (Discord
+     * picture, head only) or a bare UUID / player name (old style).
+     */
+    private static String url(String key, Kind kind) {
+        if (key.startsWith("discord:")) {
+            String[] p = key.substring(8).split("/", 2);
+            return p.length == 2 && p[0].matches("\\d{5,25}") && p[1].matches("(a_)?[0-9a-f]{32}")
+                    ? "https:" + "//cdn.discordapp.com/avatars/" + p[0] + "/" + p[1] + ".png?size=64" : null;
+        }
+        String id = key.startsWith("skin:") ? key.substring(5) : key;
+        if (!id.matches("[A-Za-z0-9_-]{3,36}")) {
+            return null;
+        }
+        return kind == Kind.BODY ? "https:" + "//mc-heads.net/body/" + id + "/" + BODY_W
+                : "https:" + "//mc-heads.net/avatar/" + id + "/" + HEAD_SIZE;
     }
 
-    private static String bodyUrl(String uuid) {
-        return "https:" + "//mc-heads.net/body/" + uuid + "/" + BODY_W;
+    /** Only Minecraft skins have a full body; Discord pictures are drawn as a square. */
+    public static boolean hasBody(String key) {
+        return key != null && !key.startsWith("discord:");
     }
 
     public static ResourceLocation get(String uuid) {
@@ -62,6 +77,9 @@ public final class AvatarCache {
 
     public static ResourceLocation get(String uuid, Kind kind) {
         if (uuid == null || uuid.isEmpty()) return null;
+        if (!hasBody(uuid)) {
+            kind = Kind.HEAD;
+        }
         String key = kind.name() + ":" + uuid.toLowerCase();
         synchronized (READY) {
             Entry entry = READY.get(key);
@@ -74,14 +92,19 @@ public final class AvatarCache {
             return null;
         }
         if (LOADING.add(key)) {
-            CompletableFuture.runAsync(() -> load(uuid, kind, key));
+            Kind k = kind;
+            CompletableFuture.runAsync(() -> load(uuid, k, key));
         }
         return null;
     }
 
     private static void load(String uuid, Kind kind, String key) {
         try {
-            String url = kind == Kind.BODY ? bodyUrl(uuid) : headUrl(uuid);
+            String url = url(uuid, kind);
+            if (url == null) {
+                markFailed(key);
+                return;
+            }
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(4))
@@ -97,7 +120,7 @@ public final class AvatarCache {
                 DynamicTexture tex = new DynamicTexture(img);
                 ResourceLocation rl = ResourceLocation.fromNamespaceAndPath("feed",
                         "avatar/" + kind.name().toLowerCase() + "/"
-                                + uuid.toLowerCase().replace("-", ""));
+                                + uuid.toLowerCase().replace("-", "").replaceAll("[^a-z0-9/._]", "_"));
                 Minecraft.getInstance().getTextureManager().register(rl, tex);
                 synchronized (READY) {
                     READY.put(key, new Entry(rl, tex));

@@ -72,14 +72,21 @@ public final class FeedApiClient {
     }
 
     /**
-     * Interim avatar source until v2 avatars: own skin for own posts, otherwise the skin of a
-     * Minecraft player with the same name (mc-heads accepts names), or none.
+     * Avatar key for AvatarCache: what the server says ("skin:…" / "discord:…"), except for our
+     * own posts, where the local account (or the local skin) shows changes right away.
      */
-    public static String avatarKey(String authorId, String nick) {
+    public static String avatarKey(String authorId, String avatar) {
         if (isMine(authorId)) {
-            return Minecraft.getInstance().getUser().getProfileId().toString();
+            AccountApi.Account a = AccountManager.INSTANCE.account();
+            if (a != null && a.avatar() != null) {
+                return a.avatar();
+            }
+            if (a != null && "none".equals(a.avatarChoice())) {
+                return null;
+            }
+            return "skin:" + Minecraft.getInstance().getUser().getProfileId().toString().replace("-", "");
         }
-        return nick != null && nick.matches("[A-Za-z0-9_]{3,16}") ? nick : null;
+        return avatar;
     }
 
     private CompletableFuture<JsonObject> call(String method, String path, JsonObject body) {
@@ -124,9 +131,9 @@ public final class FeedApiClient {
 
     // ---------- players ----------
 
-    public record UserCard(String id, String tag, String nick) {}
+    public record UserCard(String id, String tag, String nick, String avatar) {}
 
-    public record Profile(String id, String tag, String nick, long createdAt, boolean discord, boolean moderator,
+    public record Profile(String id, String tag, String nick, String avatar, long createdAt, boolean discord, boolean moderator,
                           int posts, int comments, int reactions, int gg, int solved) {}
 
     /** Up to 10 players by @tag prefix or nick. */
@@ -136,7 +143,7 @@ public final class FeedApiClient {
             List<UserCard> list = new ArrayList<>();
             for (JsonElement e : o.getAsJsonArray("users")) {
                 JsonObject u = e.getAsJsonObject();
-                list.add(new UserCard(str(u, "id"), str(u, "tag"), str(u, "nick")));
+                list.add(new UserCard(str(u, "id"), str(u, "tag"), str(u, "nick"), str(u, "avatar")));
             }
             return list;
         });
@@ -148,7 +155,7 @@ public final class FeedApiClient {
         return call("GET", "/v2/users/" + enc, null).thenApply(o -> {
             JsonObject u = o.getAsJsonObject("user");
             JsonObject st = u.getAsJsonObject("stats");
-            return new Profile(str(u, "id"), str(u, "tag"), str(u, "nick"), u.get("createdAt").getAsLong(),
+            return new Profile(str(u, "id"), str(u, "tag"), str(u, "nick"), str(u, "avatar"), u.get("createdAt").getAsLong(),
                     bool(u, "discord"), bool(u, "moderator"), st.get("posts").getAsInt(), st.get("comments").getAsInt(),
                     st.get("reactions").getAsInt(), st.get("gg").getAsInt(), st.get("solved").getAsInt());
         });
@@ -361,6 +368,7 @@ public final class FeedApiClient {
         p.fromDiscord = bool(a, "discord");
         p.uuid = str(a, "id");
         p.authorTag = str(a, "tag");
+        p.avatar = str(a, "avatar");
         p.createdAt = iso(o.get("createdAt").getAsLong());
         p.commentCount = o.get("comments").getAsInt();
         List<String> keys = p.postType().reactions();
@@ -398,6 +406,7 @@ public final class FeedApiClient {
         c.fromMod = !bool(a, "discord");
         c.authorId = str(a, "id");
         c.authorTag = str(a, "tag");
+        c.avatar = str(a, "avatar");
         c.createdAt = iso(o.get("createdAt").getAsLong());
         JsonObject img = firstImage(o);
         if (img != null) {

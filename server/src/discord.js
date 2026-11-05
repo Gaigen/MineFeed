@@ -118,7 +118,7 @@ async function discordUser(request, env, code) {
   // new-style handles are unique and fit our tag rules; legacy name#1234 is not a handle
   const legacy = u.discriminator && u.discriminator !== "0";
   const handle = legacy ? null : normalizeTag(u.username);
-  return { id: String(u.id), username: handle && !tagProblem(handle) ? handle : null, display: u.global_name || u.username };
+  return { id: String(u.id), username: handle && !tagProblem(handle) ? handle : null, display: u.global_name || u.username, avatar: u.avatar || null };
 }
 
 /** GET /v2/discord/callback?code&state — Discord sends the browser here. */
@@ -168,8 +168,8 @@ export async function callback(request, env, now) {
   // your current tag becomes protected if it is your Discord handle
   const protect = user.username && user.username === acc.tag ? 1 : acc.tag_protected && acc.discord_id === user.id ? 1 : 0;
   try {
-    await env.DB.prepare("UPDATE accounts SET discord_id = ?, discord_username = ?, tag_protected = ? WHERE id = ?")
-      .bind(user.id, user.username, protect, acc.id).run();
+    await env.DB.prepare("UPDATE accounts SET discord_id = ?, discord_username = ?, discord_avatar = ?, tag_protected = ? WHERE id = ?")
+      .bind(user.id, user.username, user.avatar, protect, acc.id).run();
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) {
       await finish(env, state, "error", "discord_taken", "Этот Discord уже привязан к другому профилю");
@@ -208,7 +208,7 @@ export async function poll(env, body, now) {
 /** DELETE /v2/me/discord */
 export async function unlink(env, account, now) {
   if (account.discord_id) await syncRoles(env, account.id, account.discord_id, false);
-  await env.DB.prepare("UPDATE accounts SET discord_id = NULL, discord_username = NULL, tag_protected = 0 WHERE id = ?")
+  await env.DB.prepare("UPDATE accounts SET discord_id = NULL, discord_username = NULL, discord_avatar = NULL, tag_protected = 0 WHERE id = ?")
     .bind(account.id).run();
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();
   return { account: publicAccount(acc, now) };

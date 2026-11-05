@@ -532,7 +532,7 @@ public class FeedScreen extends RetroScreen {
         }
         AccountApi.Account a = AccountManager.INSTANCE.account();
         String nick = a == null ? "?" : a.nick();
-        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), nick), nick, 6, py + 1, 16);
+        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, 6, py + 1, 16);
         g.drawString(this.font, FeedUtil.clip(this.font, nick, sw - 34), 26, py, RetroUi.FG, false);
         g.drawString(this.font, FeedUtil.clip(this.font, "@" + (a == null ? "?" : a.tag()), sw - 34), 26, py + 10, RetroUi.GRAY, false);
     }
@@ -606,7 +606,7 @@ public class FeedScreen extends RetroScreen {
         boolean own = ownProfile();
         boolean hover = own && mouseX >= x && mouseX < x + w && mouseY >= COMPOSE_Y && mouseY < COMPOSE_Y + COMPOSE_H;
         RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
-        drawAvatar(g, FeedApiClient.avatarKey(profile.id(), profile.nick()), profile.nick(), x + 4, COMPOSE_Y + 4, 12);
+        drawAvatar(g, FeedApiClient.avatarKey(profile.id(), profile.avatar()), profile.nick(), x + 4, COMPOSE_Y + 4, 12);
         String info = Component.translatable("feed.account.profile.since", AccountUi.date(profile.createdAt())).getString()
                 + " \u00b7 " + tr("feed.profile.comments", profile.comments());
         String settings = own ? tr("feed.profile.settings") : null;
@@ -653,7 +653,7 @@ public class FeedScreen extends RetroScreen {
         RetroUi.drawBox(g, x, COMPOSE_Y, w, COMPOSE_H, hover);
         AccountApi.Account a = AccountManager.INSTANCE.account();
         String nick = a == null ? "?" : a.nick();
-        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), nick), nick, x + 4, COMPOSE_Y + 4, 12);
+        drawAvatar(g, FeedApiClient.avatarKey(a == null ? null : a.id(), null), nick, x + 4, COMPOSE_Y + 4, 12);
         String hint = Component.translatable("feed.compose.bar", nick).getString();
         g.drawString(this.font, FeedUtil.clip(this.font, hint, w - 30), x + 22, COMPOSE_Y + 6, hover ? RetroUi.FG : RetroUi.GRAY, false);
     }
@@ -757,7 +757,7 @@ public class FeedScreen extends RetroScreen {
 
         int ax = x + PAD;
         int ay = y + PAD;
-        drawAvatar(g, FeedApiClient.avatarKey(post.uuid, post.author), displayAuthor(post), ax, ay, 16);
+        drawAvatar(g, FeedApiClient.avatarKey(post.uuid, post.avatar), displayAuthor(post), ax, ay, 16);
         g.renderOutline(ax, ay, 16, 16, fg);
 
         int nx = ax + 22;

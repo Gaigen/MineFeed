@@ -1,3 +1,4 @@
+import * as A from "./avatars.js";
 import { HttpError, base64url, randomBytes, recoveryCode, normalizeRecovery, sha256Hex, clientIp } from "./util.js";
 import { normalizeTag, tagProblem, validTag, validNick } from "./names.js";
 
@@ -51,6 +52,10 @@ export function publicAccount(a, now) {
     discordUsername: a.discord_username || null,
     lostTag: a.lost_tag || null,
     moderator: !!a.moderator,
+    avatarChoice: a.avatar || "skin",
+    avatar: A.keyOf(a),
+    skin: a.skin || null,
+    hasDiscordAvatar: !!(a.discord_id && a.discord_avatar),
     canChangeTagAt: nextTagChange && nextTagChange > now ? nextTagChange : null,
   };
 }
@@ -152,6 +157,16 @@ export async function updateMe(env, account, body, now) {
   if (body.nick !== undefined) {
     const nick = validNick(body.nick);
     await env.DB.prepare("UPDATE accounts SET nick = ? WHERE id = ?").bind(nick, account.id).run();
+  }
+  if (body.skin !== undefined) {
+    // the mod reports the signed-in Minecraft profile; null forgets it
+    const skin = body.skin === null ? null : A.normalizeSkin(body.skin);
+    if (body.skin !== null && !skin) throw new HttpError(400, "bad_skin", "Неверный UUID Minecraft");
+    await env.DB.prepare("UPDATE accounts SET skin = ? WHERE id = ?").bind(skin, account.id).run();
+  }
+  if (body.avatar !== undefined) {
+    if (!A.CHOICES.includes(body.avatar)) throw new HttpError(400, "bad_avatar", "Неизвестный тип аватара");
+    await env.DB.prepare("UPDATE accounts SET avatar = ? WHERE id = ?").bind(body.avatar, account.id).run();
   }
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();
   return { account: publicAccount(acc, now) };

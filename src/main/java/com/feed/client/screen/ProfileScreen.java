@@ -16,6 +16,8 @@ public class ProfileScreen extends AccountPanelScreen {
 
     private static final int SIDE_BTN_W = 66;
     private static final int GAP = 6;
+    private static final int AVATAR_BTN_W = 86;
+    private static final int AVATAR = 26;
 
     private final Screen parent;
     private TagChecker checker;
@@ -26,6 +28,7 @@ public class ProfileScreen extends AccountPanelScreen {
     private RetroButton saveNick;
     private RetroButton changeTag;
     private RetroButton discordButton;
+    private RetroButton avatarButton;
     private boolean lostTagHandled;
     private boolean refreshed;
     private String note;
@@ -75,6 +78,8 @@ public class ProfileScreen extends AccountPanelScreen {
         discordButton = addRenderableWidget(new RetroButton(innerX() + innerW() - SIDE_BTN_W, infoY + 2 * LINE - 3,
                 SIDE_BTN_W, 14, Component.translatable(a.discordLinked() ? "feed.account.discord.unlink" : "feed.account.discord.link"),
                 b -> discordAction()));
+        avatarButton = addRenderableWidget(new RetroButton(innerX() + innerW() - AVATAR_BTN_W, infoY - 3,
+                AVATAR_BTN_W, 14, Component.translatable("feed.account.avatar." + avatarChoice(a)), b -> cycleAvatar()));
         y += 3 * LINE + 8;
 
         int fieldW = innerW() - SIDE_BTN_W - GAP;
@@ -158,6 +163,32 @@ public class ProfileScreen extends AccountPanelScreen {
         changeTag.active = !busy && checker.state() != TagChecker.State.OWN && checker.submittable()
                 && (!onCooldown() || isClaimValue());
         discordButton.active = !busy;
+        avatarButton.active = !busy;
+    }
+
+    private static String avatarChoice(AccountApi.Account a) {
+        String c = a.avatarChoice();
+        return "discord".equals(c) || "none".equals(c) ? c : "skin";
+    }
+
+    /** skin → Discord (if there is a picture) → none → skin */
+    private void cycleAvatar() {
+        AccountApi.Account a = acc();
+        if (busy || a == null) {
+            return;
+        }
+        String next = switch (avatarChoice(a)) {
+            case "skin" -> a.hasDiscordAvatar() ? "discord" : "none";
+            case "discord" -> "none";
+            default -> "skin";
+        };
+        busy = true;
+        AccountManager.thenOnMain(AccountManager.INSTANCE.api().setAvatar(next), updated -> {
+            busy = false;
+            AccountManager.INSTANCE.updateAccount(updated);
+            setStatus(Component.translatable("feed.account.avatar.saved"), AccountUi.GREEN);
+            rebuildWidgets();
+        }, this::fail);
     }
 
     private boolean isClaimValue() {
@@ -315,10 +346,21 @@ public class ProfileScreen extends AccountPanelScreen {
         if (a == null) {
             return;
         }
-        int x = innerX();
+        int x0 = innerX();
+        net.minecraft.resources.ResourceLocation head = com.feed.client.AvatarCache.get(
+                com.feed.client.FeedApiClient.avatarKey(a.id(), null));
+        if (head != null) {
+            g.blit(head, x0, infoY - 1, 0, 0, AVATAR, AVATAR, AVATAR, AVATAR);
+        } else {
+            g.fill(x0, infoY - 1, x0 + AVATAR, infoY - 1 + AVATAR, RetroUi.GRAY);
+            String letter = a.nick() == null || a.nick().isEmpty() ? "?" : a.nick().substring(0, 1).toUpperCase();
+            g.drawString(this.font, letter, x0 + (AVATAR - this.font.width(letter)) / 2 + 1, infoY - 1 + (AVATAR - 8) / 2, RetroUi.BG, false);
+        }
+        int x = x0 + AVATAR + 6;
+        int infoW = innerW() - AVATAR - 6;
         String handle = "@" + a.tag();
         g.drawString(this.font, handle, x, infoY, RetroUi.ACCENT, false);
-        g.drawString(this.font, this.font.plainSubstrByWidth(a.nick(), innerW() - this.font.width(handle) - 8),
+        g.drawString(this.font, this.font.plainSubstrByWidth(a.nick(), infoW - AVATAR_BTN_W - this.font.width(handle) - 12),
                 x + this.font.width(handle) + 8, infoY, RetroUi.FG, false);
         g.drawString(this.font, Component.translatable("feed.account.profile.since", AccountUi.date(a.createdAt())),
                 x, infoY + LINE, RetroUi.GRAY, false);
@@ -332,8 +374,9 @@ public class ProfileScreen extends AccountPanelScreen {
             discord = Component.translatable(a.tagProtected() ? "feed.account.profile.discord_protected"
                     : "feed.account.profile.discord_linked");
         }
-        g.drawString(this.font, this.font.plainSubstrByWidth(discord.getString(), innerW() - SIDE_BTN_W - 6),
+        g.drawString(this.font, this.font.plainSubstrByWidth(discord.getString(), infoW - SIDE_BTN_W - 6),
                 x, infoY + 2 * LINE, a.tagProtected() ? AccountUi.GREEN : RetroUi.GRAY, false);
+        x = x0;
 
         AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.nick.label"), x, nickLabelY);
         AccountUi.drawLabel(g, this.font, Component.translatable("feed.account.tag.label"), x, tagLabelY);

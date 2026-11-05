@@ -4,6 +4,8 @@ import { HttpError, randomCode, clientIp } from "./util.js";
 import { rateLimit, DAY } from "./accounts.js";
 import { dapi } from "./dapi.js";
 import * as N from "./notify.js";
+import * as F from "./feed.js";
+import { welcomeContent } from "./welcome.js";
 
 export const MAX_OWNED = 1;
 export const MAX_CODES = 20;
@@ -64,7 +66,7 @@ const isMod = (role) => role === "owner" || role === "mod";
 
 function out(c, role, extra = {}) {
   return {
-    id: c.id, name: c.name, description: c.description, members: c.members,
+    id: c.id, name: c.name, description: c.description, about: c.about || "", links: c.links || "", members: c.members,
     ownerId: c.owner_id, createdAt: c.created_at, role, ...extra,
   };
 }
@@ -175,9 +177,10 @@ export async function createCommunity(env, account, fields, now) {
     const id = randomCode(10).toLowerCase();
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO communities (id, name, description, owner_id, forum_id, category_id, mod_role_id, member_role_id, members, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
-      ).bind(id, name, description, account.id, forum.id, category, modRole.id, memberRole.id, now),
+        `INSERT INTO communities (id, name, description, about, links, lang, owner_id, forum_id, category_id, mod_role_id, member_role_id, members, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+      ).bind(id, name, description, String(fields.about || ""), String(fields.links || ""), fields.lang === "ru" ? "ru" : "en",
+        account.id, forum.id, category, modRole.id, memberRole.id, now),
       env.DB.prepare("INSERT INTO members (community_id, account_id, role, joined_at, read_at) VALUES (?, ?, 'owner', ?, ?)").bind(id, account.id, now, now),
       env.DB.prepare("INSERT INTO spaces (id, forum_id, tags) VALUES (?, ?, ?)").bind(id, forum.id, JSON.stringify(tags)),
     ]);
@@ -232,6 +235,8 @@ export async function update(env, account, id, body) {
   const c = await access(env, account, id, "owner");
   const name = body.name === undefined ? c.name : validName(body.name);
   const description = body.description === undefined ? c.description : validDescription(body.description);
+  const about = body.about === undefined ? c.about : optional(body.about, 1000);
+  const links = body.links === undefined ? c.links : optional(body.links, 300);
   if (name !== c.name) {
     await dapi(env, "PATCH", `/guilds/${env.DISCORD_GUILD_ID}/roles/${c.mod_role_id}`, { body: { name: `${name} · mod` }, allow404: true });
     await dapi(env, "PATCH", `/guilds/${env.DISCORD_GUILD_ID}/roles/${c.member_role_id}`, { body: { name: `${name} · member` }, allow404: true });
@@ -241,8 +246,22 @@ export async function update(env, account, id, body) {
       body: { name: channelName(name), topic: description || `MineFeed community «${name}»` }, allow404: true,
     });
   }
-  await env.DB.prepare("UPDATE communities SET name = ?, description = ? WHERE id = ?").bind(name, description, c.id).run();
-  return { community: out({ ...c, name, description }, c.my_role) };
+  const next = { ...c, name, description, about, links };
+  let commentId = c.welcome_comment_id;
+  if (c.welcome_thread_id && (name !== c.name || description !== c.description || about !== c.about || links !== c.links)) {
+    try {
+      commentId = await F.updateWelcome(env, c.id, account, { threadId: c.welcome_thread_id, commentId }, welcomeContent(next, account));
+    } catch (e) {
+      console.error("welcome edit failed", e.message); // the settings are saved anyway
+    }
+  }
+  await env.DB.prepare("UPDATE communities SET name = ?, description = ?, about = ?, links = ?, welcome_comment_id = ? WHERE id = ?")
+    .bind(name, description, about, links, commentId, c.id).run();
+  return { community: out(next, c.my_role) };
+}
+
+function optional(raw, max) {
+  return String(raw ?? "").trim() ? F.cleanText(raw, max) : "";
 }
 
 /** DELETE /v2/communities/:id — owner. Removes the forum, roles and all posts. */

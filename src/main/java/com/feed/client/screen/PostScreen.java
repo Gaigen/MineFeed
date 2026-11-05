@@ -484,8 +484,13 @@ public class PostScreen extends RetroScreen {
         int ay = y + PAD;
         int skinW = AvatarCache.BODY_W;
         int skinH = AvatarCache.BODY_H;
-        ResourceLocation skin = AvatarCache.get(FeedApiClient.avatarKey(post.uuid, post.author), AvatarCache.Kind.BODY);
-        if (skin != null) {
+        String avatarKey = FeedApiClient.avatarKey(post.uuid, post.avatar);
+        ResourceLocation skin = AvatarCache.get(avatarKey, AvatarCache.Kind.BODY);
+        if (skin != null && !AvatarCache.hasBody(avatarKey)) {
+            // a Discord picture: a square at the top of the body slot
+            g.blit(skin, ax, ay, 0, 0, skinW, skinW, skinW, skinW);
+            skinH = skinW;
+        } else if (skin != null) {
             g.blit(skin, ax, ay, 0, 0, skinW, skinH, skinW, skinH);
         } else {
             g.fill(ax, ay, ax + skinW, ay + skinH, RetroUi.GRAY);

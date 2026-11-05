@@ -135,6 +135,47 @@ test("players apply, staff approve in Discord", async () => {
   const edit = calls.find((c) => c.m === "PATCH" && c.p.startsWith("/channels/apps/messages/"));
   assert.deepEqual(edit.body.components, []);
 
+  // editing the community rewrites the welcome post and its "about" comment
+  const cid = d.data.community.id;
+  const thread = hooks[0] && calls.find((c) => c.m === "PATCH" && c.body && c.body.locked).p.split("/")[2];
+  calls.length = 0;
+  const up = await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { name: "Шахта 2", about: "Теперь глубже" } });
+  assert.equal(up.status, 200, JSON.stringify(up.data));
+  assert.equal(up.data.community.about, "Теперь глубже");
+  assert.ok(calls.find((c) => c.m === "PATCH" && c.p === `/channels/${thread}` && c.body.name === "Шахта 2"));
+  const edits = calls.filter((c) => c.m === "PATCH" && c.p.startsWith("/webhooks/"));
+  assert.equal(edits.length, 2);
+  assert.match(edits[0].body.content, /Добро пожаловать в «Шахта 2»/);
+  assert.match(edits[1].body.content, /Теперь глубже/);
+  assert.match(edits[1].body.content, /example\.com/);
+  calls.length = 0;
+  await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { about: "", links: "" } });
+  assert.ok(calls.find((c) => c.m === "DELETE" && c.p.startsWith("/webhooks/")));
+  calls.length = 0;
+  await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { about: "Снова" } });
+  const posted = calls.find((c) => c.m === "POST" && c.p.startsWith("/webhooks/"));
+  assert.match(posted.body.content, /Снова/);
+  assert.ok(calls.find((c) => c.m === "PATCH" && c.body && c.body.locked === false));
+  const row = await env.DB.prepare("SELECT welcome_comment_id FROM communities WHERE id = ?").bind(cid).first();
+  assert.ok(row.welcome_comment_id);
+  // the owner's skin becomes the webhook avatar
+  assert.equal(posted.body.avatar_url, undefined);
+  await api("PATCH", "/v2/me", { key: a.key, body: { skin: "069A79F4-44E9-4726-A5BE-FCA90E38AAF5" } });
+  calls.length = 0;
+  await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { about: "Ещё раз" } });
+  await api("POST", "/v2/posts", { key: a.key, body: { space: cid, type: "talk", text: "hi" } });
+  const hp = calls.find((c) => c.m === "POST" && c.p.startsWith("/webhooks/") && c.body.content === "hi");
+  assert.equal(hp.body.avatar_url, "https://mc-heads.net/avatar/069a79f444e94726a5befca90e38aaf5/128");
+  assert.equal((await api("GET", "/v2/users/alice")).data.user.avatar, "skin:069a79f444e94726a5befca90e38aaf5");
+  await env.DB.prepare("UPDATE accounts SET discord_avatar = ?, discord_id = '123456789' WHERE id = ?").bind("a_" + "1".repeat(32), a.id).run();
+  let me = (await api("PATCH", "/v2/me", { key: a.key, body: { avatar: "discord" } })).data.account;
+  assert.equal(me.avatar, `discord:123456789/a_${"1".repeat(32)}`);
+  await env.DB.prepare("UPDATE accounts SET discord_id = 'd-alice' WHERE id = ?").bind(a.id).run();
+  me = (await api("PATCH", "/v2/me", { key: a.key, body: { avatar: "none" } })).data.account;
+  assert.equal(me.avatar, null);
+  assert.equal((await api("PATCH", "/v2/me", { key: a.key, body: { avatar: "cat" } })).data.code, "bad_avatar");
+  assert.equal((await api("PATCH", "/v2/me", { key: a.key, body: { skin: "nope" } })).data.code, "bad_skin");
+
   mine = (await api("GET", "/v2/communities", { key: a.key })).data;
   assert.equal(mine.communities.length, 1);
   assert.equal(mine.canApply, false);

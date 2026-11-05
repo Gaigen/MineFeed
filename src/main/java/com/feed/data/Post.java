@@ -10,6 +10,7 @@ public class Post {
     public String uuid;      // v2: author account id (null for Discord authors)
     public String authorTag; // v2: @tag without "@", null for Discord authors
     public boolean fromDiscord;
+    public String avatar;    // "skin:<uuid>" | "discord:<id>/<hash>" | null
     public String text;
     public String type;
     public String createdAt;

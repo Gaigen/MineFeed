@@ -1,5 +1,6 @@
 // Events from the Discord gateway bot (runs on the VPS). It forwards raw-ish Discord events in batches;
 // everything here is idempotent, so the bot may safely resend a batch.
+import * as A from "./avatars.js";
 import { HttpError, sha256Hex } from "./util.js";
 import { dapi, snowflakeTime } from "./dapi.js";
 import { TYPES, MAX_POST, markPostDeleted, markCommentDeleted } from "./feed.js";
@@ -42,7 +43,7 @@ async function ourWebhooks(env) {
 }
 
 async function linkedAccount(env, discordId) {
-  return env.DB.prepare("SELECT id, tag, nick FROM accounts WHERE discord_id = ? AND banned = 0").bind(discordId).first();
+  return env.DB.prepare("SELECT id, tag, nick, discord_avatar FROM accounts WHERE discord_id = ? AND banned = 0").bind(discordId).first();
 }
 
 function displayName(d) {
@@ -59,6 +60,12 @@ async function onMessage(env, d, ctx, now) {
   const acc = await linkedAccount(env, d.author.id);
   const created = snowflakeTime(d.id);
   const actor = acc || { ext_name: displayName(d) };
+  const hash = d.author.avatar ?? null;
+  const extAvatar = !acc && A.discordKey(d.author.id, hash) ? `${d.author.id}/${hash}` : null;
+  if (acc && "avatar" in d.author && (acc.discord_avatar || null) !== hash) {
+    // keep the linked player's Discord picture fresh
+    await env.DB.prepare("UPDATE accounts SET discord_avatar = ? WHERE id = ?").bind(hash, acc.id).run();
+  }
 
   if (d.id === d.channel_id) {
     // someone opened a new forum post right in Discord
@@ -69,9 +76,9 @@ async function onMessage(env, d, ctx, now) {
     const type = TYPES.find((t) => applied.has(tagIds[t])) || "talk";
     const body = [d.thread_name, text].filter(Boolean).join("\n");
     const r = await env.DB.prepare(
-      `INSERT OR IGNORE INTO posts (id, space, author_id, ext_name, type, text, image, created_at, updated_at, solved)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(d.id, space.id, acc ? acc.id : null, acc ? null : displayName(d), type, [...body].slice(0, MAX_POST).join("") || "…",
+      `INSERT OR IGNORE INTO posts (id, space, author_id, ext_name, ext_avatar, type, text, image, created_at, updated_at, solved)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(d.id, space.id, acc ? acc.id : null, acc ? null : displayName(d), extAvatar, type, [...body].slice(0, MAX_POST).join("") || "…",
       image, created, now, applied.has(tagIds.solved) ? 1 : 0).run();
     return r.meta.changes ? "post" : "dup";
   }
@@ -79,9 +86,9 @@ async function onMessage(env, d, ctx, now) {
   const post = await env.DB.prepare("SELECT id, space, author_id, deleted FROM posts WHERE id = ?").bind(d.channel_id).first();
   if (!post || post.deleted) return "skip";
   const r = await env.DB.prepare(
-    `INSERT OR IGNORE INTO comments (id, post_id, author_id, ext_name, text, image, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(d.id, post.id, acc ? acc.id : null, acc ? null : displayName(d), text, image, created, now).run();
+    `INSERT OR IGNORE INTO comments (id, post_id, author_id, ext_name, ext_avatar, text, image, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(d.id, post.id, acc ? acc.id : null, acc ? null : displayName(d), extAvatar, text, image, created, now).run();
   if (!r.meta.changes) return "dup";
   await env.DB.prepare("UPDATE posts SET comments = comments + 1, updated_at = ? WHERE id = ?").bind(now, post.id).run();
   const skip = [];

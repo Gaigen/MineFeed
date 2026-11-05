@@ -94,7 +94,7 @@ public class SearchScreen extends ModalScreen {
                 if (hover) {
                     g.fill(x, y, x + w, y + ROW_H - 2, RetroUi.HOVER_BG);
                 }
-                ResourceLocation head = AvatarCache.get(FeedApiClient.avatarKey(u.id(), u.nick()));
+                ResourceLocation head = AvatarCache.get(FeedApiClient.avatarKey(u.id(), u.avatar()));
                 if (head != null) {
                     g.blit(head, x + 2, y + 1, 0, 0, 16, 16, 16, 16);
                 } else {

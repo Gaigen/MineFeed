@@ -1,5 +1,6 @@
 // Player profiles and search. Only the global feed counts: community posts stay private.
 import { HttpError } from "./util.js";
+import * as A from "./avatars.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TAG = /^[a-z0-9_.]{1,32}$/;
@@ -14,11 +15,11 @@ export async function search(env, q) {
   if (!raw) return { users: [] };
   const lower = raw.toLowerCase();
   const { results } = await env.DB.prepare(
-    `SELECT id, tag, nick FROM accounts
+    `SELECT id, tag, nick, skin, avatar, discord_id, discord_avatar FROM accounts
      WHERE banned = 0 AND (tag LIKE ?1 ESCAPE '\\' OR nick LIKE ?2 ESCAPE '\\')
      ORDER BY (tag = ?3) DESC, (tag LIKE ?1 ESCAPE '\\') DESC, length(tag), tag LIMIT 10`
   ).bind(likeEscape(lower) + "%", "%" + likeEscape(raw) + "%", lower).all();
-  return { users: results.map((r) => ({ id: r.id, tag: r.tag, nick: r.nick })) };
+  return { users: results.map((r) => ({ id: r.id, tag: r.tag, nick: r.nick, avatar: A.keyOf(r) })) };
 }
 
 /** GET /v2/users/:idOrTag — public profile with stats from the global feed. */
@@ -26,7 +27,7 @@ export async function profile(env, key) {
   const k = String(key || "").toLowerCase().replace(/^@/, "");
   if (!UUID.test(k) && !TAG.test(k)) throw new HttpError(404, "no_user", "Игрок не найден");
   const a = await env.DB.prepare(
-    `SELECT id, tag, nick, created_at, discord_id, moderator, banned, tag_protected FROM accounts WHERE ${UUID.test(k) ? "id" : "tag"} = ?`
+    `SELECT id, tag, nick, created_at, discord_id, discord_avatar, skin, avatar, moderator, banned, tag_protected FROM accounts WHERE ${UUID.test(k) ? "id" : "tag"} = ?`
   ).bind(k).first();
   if (!a || a.banned) throw new HttpError(404, "no_user", "Игрок не найден");
   const s = await env.DB.prepare(
@@ -40,7 +41,7 @@ export async function profile(env, key) {
   ).bind(a.id).first();
   return {
     user: {
-      id: a.id, tag: a.tag, nick: a.nick, createdAt: a.created_at,
+      id: a.id, tag: a.tag, nick: a.nick, createdAt: a.created_at, avatar: A.keyOf(a),
       discord: !!a.discord_id, moderator: !!a.moderator, tagProtected: !!a.tag_protected,
       stats: { posts: s.posts, comments: c.n, reactions: s.reactions, gg: s.gg, solved: s.solved },
     },

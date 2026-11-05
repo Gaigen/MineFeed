@@ -8,6 +8,7 @@ public class Comment {
     public boolean fromMod; // true = MineFeed account, false = written in Discord
     public String authorId; // v2 account id
     public String authorTag;
+    public String avatar;
     public String imageUrl;
     public int imageW;
     public int imageH;

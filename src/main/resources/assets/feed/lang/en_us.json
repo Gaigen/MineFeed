@@ -333,5 +333,11 @@
   "feed.profile.comments": "comments: %d",
   "feed.profile.mod": "moderator",
   "feed.profile.settings": "Account settings →",
-  "feed.profile.empty": "No posts in the global feed yet."
+  "feed.profile.empty": "No posts in the global feed yet.",
+  "feed.account.avatar.skin": "Avatar: skin",
+  "feed.account.avatar.discord": "Avatar: Discord",
+  "feed.account.avatar.none": "No avatar",
+  "feed.account.avatar.saved": "Avatar updated",
+  "feed.manage.settings.about": "About the project",
+  "feed.manage.settings.links": "Links"
 }
