@@ -72,24 +72,31 @@ client.once("clientReady", async () => {
   }
 });
 
-// new releases of our mods -> announcements channel (pings the mod's role from PING_ROLES)
+// new releases of our mods -> announcements (pings the mod's role from PING_ROLES, only new ones)
+// and per-mod release history channels (RELEASE_CHANNELS, every version, no ping)
 const ANNOUNCE_CHANNEL_ID = process.env.ANNOUNCE_CHANNEL_ID || "";
+const releaseChannels = parseRoles(process.env.RELEASE_CHANNELS); // same "key:id,key:id" format
+const releaseChannel = (id, crosspost) => ({
+  async send(msg) {
+    const ch = await client.channels.fetch(id);
+    const m = await ch.send(msg);
+    if (crosspost && ch.type === ChannelType.GuildAnnouncement) await m.crosspost().catch((e) => console.warn("crosspost failed:", e.message));
+    return m;
+  },
+  async recentFooters() {
+    const ch = await client.channels.fetch(id);
+    const msgs = await ch.messages.fetch({ limit: 100 });
+    return new Set([...msgs.values()].filter((m) => m.author.id === client.user.id).flatMap((m) => m.embeds.map((e) => e.footer?.text)).filter(Boolean));
+  },
+});
+const targets = [];
 if (ANNOUNCE_CHANNEL_ID) {
-  const since = Date.parse(process.env.RELEASES_SINCE || "") || Date.now();
-  const channel = {
-    async send(msg) {
-      const ch = await client.channels.fetch(ANNOUNCE_CHANNEL_ID);
-      const m = await ch.send(msg);
-      if (ch.type === ChannelType.GuildAnnouncement) await m.crosspost().catch((e) => console.warn("crosspost failed:", e.message));
-      return m;
-    },
-    async recentFooters() {
-      const ch = await client.channels.fetch(ANNOUNCE_CHANNEL_ID);
-      const msgs = await ch.messages.fetch({ limit: 50 });
-      return new Set([...msgs.values()].filter((m) => m.author.id === client.user.id).flatMap((m) => m.embeds.map((e) => e.footer?.text)).filter(Boolean));
-    },
-  };
-  const tick = makeAnnouncer({ fetchJson, channel, roles: pingRoles, since });
+  targets.push({ name: "announcements", channel: releaseChannel(ANNOUNCE_CHANNEL_ID, true), ping: true,
+    since: Date.parse(process.env.RELEASES_SINCE || "") || Date.now(), fallback: "Fixes and improvements." });
+}
+for (const [key, id] of Object.entries(releaseChannels)) targets.push({ name: `${key}-releases`, channel: releaseChannel(id, false), projects: [key], since: 0 });
+if (targets.length) {
+  const tick = makeAnnouncer({ fetchJson, targets, roles: pingRoles });
   const run = () => { if (client.isReady()) tick().catch((e) => console.warn("releases:", e.message)); };
   setTimeout(run, 60_000);
   setInterval(run, 10 * 60_000);

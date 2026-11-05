@@ -53,4 +53,6 @@ On approval the Worker creates the community, a pinned welcome post and DMs the 
   It keeps no state: the channel itself is the memory (embed footer `<Name> <version>`), and only versions published
   after `RELEASES_SINCE` are announced. Pre-releases (alpha/beta/rc/dev) are skipped.
   The text is the GitHub release body, or the commits of the release when the body is only "Full Changelog".
+- `RELEASE_CHANNELS` (`key:channelId,...`): per-mod history channels; every version of that mod is posted there once,
+  in version order, without a ping (the first run fills the channel with all past versions).
 - `pings.js` handles buttons with `customId` `ping:<key>` (message in #welcome): a click toggles that ping role.
