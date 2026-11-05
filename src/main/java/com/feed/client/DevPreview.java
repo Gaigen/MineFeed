@@ -4,6 +4,9 @@ import com.feed.Feed;
 import com.feed.client.account.AccountManager;
 import com.feed.client.screen.CommunityScreen;
 import com.feed.client.screen.FeedScreen;
+import com.feed.client.screen.ModerationScreen;
+import com.feed.client.screen.ReportScreen;
+import com.feed.client.screen.ShellScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.neoforged.api.distmarker.Dist;
@@ -17,7 +20,8 @@ import java.util.List;
 /**
  * Development only: with -Dminefeed.preview the feed opens straight from the title screen,
  * so the UI can be checked without loading a world (every time the title screen shows up).
- * F8 / F7 on a feed page open a sample community as its owner / as a member (fixed data).
+ * F8 / F7 on a feed page open a sample community as its owner / as a member (fixed data),
+ * F9 the moderation queue with sample reports, F6 the report dialog (nothing is sent).
  */
 @EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class DevPreview {
@@ -39,10 +43,26 @@ public final class DevPreview {
 
     @SubscribeEvent
     public static void onKey(ScreenEvent.KeyPressed.Pre event) {
-        if (!on() || !(event.getScreen() instanceof FeedScreen feed)) {
+        if (!on() || !(event.getScreen() instanceof ShellScreen)) {
             return;
         }
         int k = event.getKeyCode();
+        if (k == GLFW.GLFW_KEY_F9 || k == GLFW.GLFW_KEY_F6) {
+            FeedScreen home = event.getScreen() instanceof FeedScreen f ? f : new FeedScreen();
+            if (k == GLFW.GLFW_KEY_F9) {
+                CommunityApi.previewMod = true;
+                Minecraft.getInstance().setScreen(new ModerationScreen(home).preview(reports()));
+            } else {
+                ReportScreen r = new ReportScreen(home, "0", null).offline();
+                r.from(event.getScreen());
+                Minecraft.getInstance().setScreen(r);
+            }
+            event.setCanceled(true);
+            return;
+        }
+        if (!(event.getScreen() instanceof FeedScreen feed)) {
+            return;
+        }
         if (k == GLFW.GLFW_KEY_F8 || k == GLFW.GLFW_KEY_F7) {
             Minecraft.getInstance().setScreen(sample(feed, k == GLFW.GLFW_KEY_F8));
             event.setCanceled(true);
@@ -76,5 +96,24 @@ public final class DevPreview {
         List<CommunityApi.JoinRequest> requests = List.of(
                 new CommunityApi.JoinRequest("kot", "kot_boss", "Котик", "для Discord-канала", now - 20 * 60_000L, null));
         return new CommunityScreen(feed, c).preview(codes, members, requests);
+    }
+
+    private static List<ModerationApi.Report> reports() {
+        long now = System.currentTimeMillis();
+        String notch = "skin:069a79f444e94726a5befca90e38aaf5";
+        String jeb = "skin:853c80ef3c3749fdaa49938b674adae6";
+        return List.of(
+                new ModerationApi.Report("1", null, "global", null, 3, now - 12 * 60_000L,
+                        List.of("spam", "scam"), List.of("alex", "deep_miner", "kot_boss"),
+                        List.of("Кидает ссылку на сторонний сайт", "Уже третий раз за день"),
+                        "РАЗДАЮ АЛМАЗЫ БЕСПЛАТНО!!! Заходи на free-diamonds.example и вводи пароль от аккаунта",
+                        false, new ModerationApi.Author("spam1", "diamond_giver", "АлмазныйКороль", null), "chat", true, false),
+                new ModerationApi.Report("2", "21", "sample", "Проект Шахта", 1, now - 2 * 3_600_000L,
+                        List.of("abuse"), List.of("forge_master"), List.of(),
+                        "ты вообще играть не умеешь, удали игру",
+                        false, new ModerationApi.Author("rude", "griefer228", "Грифер", jeb), null, true, true),
+                new ModerationApi.Report("3", null, "global", null, 1, now - 26 * 3_600_000L,
+                        List.of("nsfw"), List.of("alex"), List.of(),
+                        "", true, new ModerationApi.Author("art", "pixel_art", "Художник", notch), "build", true, false));
     }
 }

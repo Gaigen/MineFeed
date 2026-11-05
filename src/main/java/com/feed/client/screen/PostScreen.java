@@ -118,10 +118,25 @@ public class PostScreen extends ShellScreen {
                 solveButton = addRenderableWidget(new RetroButton(right, 5, sw, BTN_H, solve, b -> solve())
                         .color(PostType.GG.accent()));
             }
+        } else if (CommunityApi.canModerate(post.space)) {
+            Component del = Component.translatable("feed.screen.post.delete");
+            int dw = this.font.width(del) + 12;
+            right -= dw;
+            deleteButton = addRenderableWidget(new RetroButton(right, 5, dw, BTN_H, del, b -> confirmDelete())
+                    .color(RetroUi.ERROR));
+            right -= 4;
+            if (CommunityApi.serverMod() && post.uuid != null) {
+                Component ban = Component.translatable("feed.mod.ban");
+                int bw = this.font.width(ban) + 12;
+                right -= bw;
+                addRenderableWidget(new RetroButton(right, 5, bw, BTN_H, ban, b -> banAuthor(post.uuid, post.author, null))
+                        .color(RetroUi.ERROR));
+            }
         } else {
             Component rep = Component.translatable("feed.screen.post.report");
             int rw = this.font.width(rep) + 12;
-            reportButton = addRenderableWidget(new RetroButton(right - rw, 5, rw, BTN_H, rep, b -> reportPost()));
+            reportButton = addRenderableWidget(new RetroButton(right - rw, 5, rw, BTN_H, rep,
+                    b -> openModal(new ReportScreen(home(), post.id, null))));
         }
 
         String keep = input != null ? input.getValue() : "";
@@ -301,18 +316,71 @@ public class PostScreen extends ShellScreen {
         }));
     }
 
-    private void reportPost() {
-        reportButton.active = false;
-        FeedApiClient.INSTANCE.report(post.id, null, null).whenComplete((v, ex) ->
-                this.minecraft.execute(() -> {
-                    if (ex != null) {
-                        reportButton.active = true;
-                        showError(FeedApiClient.unwrap(ex).userMessage());
-                    } else {
-                        error = Component.translatable("feed.screen.post.reported");
-                        errorColor = AccountUi.GREEN;
-                    }
-                }));
+    private void openModal(ModalScreen m) {
+        m.from(this);
+        this.minecraft.setScreen(m);
+    }
+
+    private void banAuthor(String userId, String nick, Comment c) {
+        openModal(new BanScreen(home(), userId, nick, post.id, c == null ? null : c.id, until -> {
+            error = Component.translatable("feed.mod.done.banned");
+            errorColor = AccountUi.GREEN;
+            refreshComments();
+        }));
+    }
+
+    // ---------- comment actions (shown on hover) ----------
+
+    private record Action(String label, int color, Runnable run) {}
+
+    private List<Action> commentActions(Comment c) {
+        List<Action> out = new ArrayList<>();
+        if (c.id == null) {
+            return out;
+        }
+        boolean mine = c.authorId != null && FeedApiClient.isMine(c.authorId);
+        boolean mod = CommunityApi.canModerate(post.space);
+        if (mine || isOwn() || mod) {
+            out.add(new Action(tr("feed.comment.delete"), RetroUi.ERROR, () -> confirmDeleteComment(c)));
+        }
+        if (!mine && mod && CommunityApi.serverMod() && c.authorId != null) {
+            out.add(new Action(tr("feed.mod.ban"), RetroUi.ERROR, () -> banAuthor(c.authorId, commentAuthor(c), c)));
+        }
+        if (!mine && !mod) {
+            out.add(new Action(tr("feed.comment.report"), RetroUi.GRAY, () -> openModal(new ReportScreen(home(), post.id, c.id))));
+        }
+        return out;
+    }
+
+    private void confirmDeleteComment(Comment c) {
+        this.minecraft.setScreen(new RetroConfirmScreen(this,
+                Component.translatable("feed.comment.delete_title"),
+                Component.translatable("feed.comment.delete_confirm"),
+                Component.translatable("feed.comment.delete"), true, () -> {
+            this.minecraft.setScreen(this);
+            FeedApiClient.INSTANCE.deleteComment(post.id, c.id).whenComplete((v, ex) ->
+                    this.minecraft.execute(() -> {
+                        if (ex != null) {
+                            showError(FeedApiClient.unwrap(ex).userMessage());
+                            return;
+                        }
+                        comments.remove(c);
+                        post.commentCount = Math.max(0, post.commentCount - 1);
+                        relayout();
+                    }));
+        }));
+    }
+
+    /** Right edge layout of the hover actions: returns the x of each action, right-aligned on the header line. */
+    private int[] actionXs(List<Action> acts, int x) {
+        int[] xs = new int[acts.size()];
+        int ax = x + contentWidth() - 2;
+        for (int i = acts.size() - 1; i >= 0; i--) {
+            ax -= this.font.width(acts.get(i).label());
+            xs[i] = ax;
+            ax -= 8;
+        }
+        return xs;
     }
 
     private void showError(Component c) {
@@ -475,6 +543,22 @@ public class PostScreen extends ShellScreen {
         if (c.imageUrl != null) {
             ImageBox.draw(g, this.font, c.imageUrl, x + 25, ly + 2, row.imgW(), row.imgH());
         }
+        if (mouseX >= x && mouseX < x + contentWidth() && mouseY >= y - 3 && mouseY < y + row.height() + 3) {
+            List<Action> acts = commentActions(c);
+            if (!acts.isEmpty()) {
+                int[] xs = actionXs(acts, x);
+                g.fill(xs[0] - 6, y - 1, x + contentWidth(), y + 9, RetroUi.BG);
+                for (int i = 0; i < acts.size(); i++) {
+                    Action a = acts.get(i);
+                    int aw = this.font.width(a.label());
+                    boolean hover = mouseY >= y - 1 && mouseY < y + 9 && mouseX >= xs[i] - 2 && mouseX < xs[i] + aw + 2;
+                    g.drawString(this.font, a.label(), xs[i], y, hover ? RetroUi.STRONG : a.color(), false);
+                    if (hover) {
+                        g.fill(xs[i], y + 9, xs[i] + aw, y + 10, RetroUi.STRONG);
+                    }
+                }
+            }
+        }
     }
 
     // ---------- input ----------
@@ -532,6 +616,16 @@ public class PostScreen extends ShellScreen {
                 continue;
             }
             Comment c = row.comment();
+            if (mouseY >= cy - 1 && mouseY < cy + 9) {
+                List<Action> acts = commentActions(c);
+                int[] xs = actionXs(acts, x);
+                for (int i = 0; i < acts.size(); i++) {
+                    if (mouseX >= xs[i] - 2 && mouseX < xs[i] + this.font.width(acts.get(i).label()) + 2) {
+                        acts.get(i).run().run();
+                        return true;
+                    }
+                }
+            }
             if (c.fromMod && c.authorId != null && mouseY < cy + 9
                     && mouseX >= x + 4 && mouseX < x + 25 + this.font.width(commentAuthor(c))) {
                 openPlayer(c.authorId);

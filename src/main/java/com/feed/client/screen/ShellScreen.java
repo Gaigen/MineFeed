@@ -46,7 +46,7 @@ public abstract class ShellScreen extends RetroScreen {
         return home != null ? home : (FeedScreen) this;
     }
 
-    /** Sidebar entry to highlight: "feed", "notifs", "profile", "themes", "c:&lt;community id&gt;" or null. */
+    /** Sidebar entry to highlight: "feed", "notifs", "mod", "profile", "themes", "c:&lt;community id&gt;" or null. */
     protected abstract String navId();
 
     // ---------- geometry ----------
@@ -105,6 +105,16 @@ public abstract class ShellScreen extends RetroScreen {
                 this.minecraft.setScreen(new NotificationsScreen(home()));
             }
         }));
+        if (CommunityApi.anyModeration()) {
+            CommunityApi.Mine m = CommunityApi.cached();
+            int open = m == null ? 0 : m.reportsOpen();
+            items.add(new Item("mod", "shield", tr("feed.nav.moderation"), 0, false,
+                    open > 0 ? String.valueOf(Math.min(open, 99)) : null, RetroUi.ERROR, () -> {
+                if (!(this instanceof ModerationScreen)) {
+                    this.minecraft.setScreen(new ModerationScreen(home()));
+                }
+            }));
+        }
         items.add(new Item("profile", "user", tr("feed.nav.profile"), 0, false, null, 0, () -> openPlayer(ownId())));
         items.add(new Item("search", "search", tr("feed.nav.search"), 0, false, null, 0, () -> modal(new SearchScreen(home()))));
         items.add(new Item("themes", "palette", tr("feed.nav.theme"), 0, false, null, 0, () -> {

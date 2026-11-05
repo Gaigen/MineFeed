@@ -62,6 +62,7 @@ public class FeedScreen extends ShellScreen {
     private FeedApiClient.Profile profile;
 
     private RetroButton settingsButton;
+    private RetroButton banButton;
 
     private record Row(Post post, PostCard.Layout layout, int y) {
         int height() {
@@ -119,6 +120,8 @@ public class FeedScreen extends ShellScreen {
         int sw = this.font.width(settings) + 12;
         settingsButton = addRenderableWidget(new RetroButton(contentLeft() + contentWidth() - sw - 6, PROFILE_CARD_Y + 6,
                 sw, BTN_H, settings, b -> this.minecraft.setScreen(new ProfileScreen(this))));
+        banButton = addRenderableWidget(new RetroButton(0, PROFILE_CARD_Y + 6, 60, BTN_H, Component.empty(), b -> toggleBan())
+                .color(RetroUi.ERROR));
         updateManageButton();
 
         relayout();
@@ -141,6 +144,17 @@ public class FeedScreen extends ShellScreen {
         }
         if (settingsButton != null) {
             settingsButton.visible = profileKey != null && ownProfile();
+        }
+        if (banButton != null) {
+            banButton.visible = profile != null && profileKey != null && !ownProfile() && CommunityApi.serverMod()
+                    && !profile.moderator();
+            if (banButton.visible) {
+                Component label = Component.translatable(profile.banned() ? "feed.profile.unban" : "feed.profile.ban");
+                int w = this.font.width(label) + 12;
+                banButton.setMessage(label);
+                banButton.setWidth(w);
+                banButton.setX(contentLeft() + contentWidth() - w - 6);
+            }
         }
         if (c != null) {
             Component label = Component.translatable(c.isMod() ? "feed.space.manage" : "feed.space.info");
@@ -223,6 +237,39 @@ public class FeedScreen extends ShellScreen {
             updateManageButton();
             requestPage(null);
         }));
+    }
+
+    private void reloadProfile() {
+        if (profile == null) {
+            return;
+        }
+        String key = profile.id();
+        profile = null;
+        profileKey = null;
+        openProfile(key);
+    }
+
+    private void toggleBan() {
+        FeedApiClient.Profile p = profile;
+        if (p == null) {
+            return;
+        }
+        if (p.banned()) {
+            this.minecraft.setScreen(new RetroConfirmScreen(this, Component.translatable("feed.profile.unban"),
+                    Component.translatable("feed.profile.unban_confirm", p.nick()), Component.translatable("feed.profile.unban"),
+                    false, () -> {
+                this.minecraft.setScreen(this);
+                com.feed.client.ModerationApi.unban(p.id()).whenComplete((v, ex) -> this.minecraft.execute(() -> {
+                    if (ex != null) {
+                        error = com.feed.client.ModerationApi.describe(ex);
+                        return;
+                    }
+                    reloadProfile();
+                }));
+            }));
+            return;
+        }
+        this.minecraft.setScreen(new BanScreen(this, p.id(), p.nick(), null, null, until -> reloadProfile()));
     }
 
     public void closeProfile() {
@@ -447,7 +494,8 @@ public class FeedScreen extends ShellScreen {
         RetroUi.drawAvatar(g, this.font, FeedApiClient.avatarKey(profile.id(), profile.avatar()), profile.nick(), x + 6, y + 6, size);
         g.renderOutline(x + 6, y + 6, size, size, RetroUi.GRAY);
         int tx = x + 54;
-        int nameRight = settingsButton != null && settingsButton.visible ? settingsButton.getX() - 6 : x + w - 6;
+        int nameRight = settingsButton != null && settingsButton.visible ? settingsButton.getX() - 6
+                : banButton != null && banButton.visible ? banButton.getX() - 6 : x + w - 6;
         String nick = FeedUtil.clip(this.font, profile.nick(), Math.max(10, (nameRight - tx) / 2));
         g.pose().pushPose();
         g.pose().translate(tx, y + 8, 0);
@@ -472,6 +520,12 @@ public class FeedScreen extends ShellScreen {
         parts.add(Component.translatable("feed.account.profile.since", AccountUi.date(profile.createdAt())).getString());
         String stats = String.join(" \u00b7 ", parts);
         g.drawString(this.font, FeedUtil.clip(this.font, stats, x + w - 6 - tx), tx, y + 39, RetroUi.GRAY, false);
+        if (profile.banned()) {
+            String ban = profile.banUntil() == null ? tr("feed.profile.banned_forever")
+                    : tr("feed.profile.banned_until", AccountUi.date(profile.banUntil()));
+            int cw = RetroUi.chipWidth(this.font, ban);
+            RetroUi.drawChip(g, this.font, ban, x + w - 6 - cw, y + 23, RetroUi.ERROR, true);
+        }
         if (profile.moderator()) {
             String mod = tr("feed.profile.mod");
             int cw = RetroUi.chipWidth(this.font, mod);

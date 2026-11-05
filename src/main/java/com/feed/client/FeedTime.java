@@ -11,6 +11,10 @@ public final class FeedTime {
     private FeedTime() {
     }
 
+    public static String ago(long epochMs) {
+        return ago(Instant.ofEpochMilli(epochMs).toString());
+    }
+
     public static String ago(String iso) {
         try {
             Instant t;

@@ -98,7 +98,8 @@ public final class FeedApiClient {
             ApiError e = AccountApi.unwrap(ex);
             Minecraft.getInstance().execute(() -> AccountManager.INSTANCE.handleError(e));
             throw new CompletionException(e.isNetwork() ? new FeedApiException(e)
-                    : new FeedApiException(e.status, e.getMessage()));
+                    : new FeedApiException(e.status, "banned".equals(e.code)
+                    ? com.feed.client.screen.AccountUi.describe(e).getString() : e.getMessage()));
         });
     }
 
@@ -135,7 +136,8 @@ public final class FeedApiClient {
     public record UserCard(String id, String tag, String nick, String avatar) {}
 
     public record Profile(String id, String tag, String nick, String avatar, long createdAt, boolean discord, boolean moderator,
-                          int posts, int comments, int reactions, int gg, int solved) {}
+                          int posts, int comments, int reactions, int gg, int solved,
+                          boolean banned, Long banUntil, String banReason) {}
 
     /** Up to 10 players by @tag prefix or nick. */
     public CompletableFuture<List<UserCard>> searchUsers(String q) {
@@ -158,7 +160,9 @@ public final class FeedApiClient {
             JsonObject st = u.getAsJsonObject("stats");
             return new Profile(str(u, "id"), str(u, "tag"), str(u, "nick"), str(u, "avatar"), u.get("createdAt").getAsLong(),
                     bool(u, "discord"), bool(u, "moderator"), st.get("posts").getAsInt(), st.get("comments").getAsInt(),
-                    st.get("reactions").getAsInt(), st.get("gg").getAsInt(), st.get("solved").getAsInt());
+                    st.get("reactions").getAsInt(), st.get("gg").getAsInt(), st.get("solved").getAsInt(),
+                    bool(u, "banned"), u.has("banUntil") && !u.get("banUntil").isJsonNull() ? u.get("banUntil").getAsLong() : null,
+                    str(u, "banReason"));
         });
     }
 
@@ -296,16 +300,6 @@ public final class FeedApiClient {
 
     public CompletableFuture<Void> deleteComment(String postId, String commentId) {
         return call("DELETE", "/v2/comments/" + commentId, null).thenApply(o -> null);
-    }
-
-    public CompletableFuture<Void> report(String postId, String commentId, String reason) {
-        JsonObject body = new JsonObject();
-        body.addProperty("postId", postId);
-        if (commentId != null) {
-            body.addProperty("commentId", commentId);
-        }
-        body.addProperty("reason", reason == null || reason.isBlank() ? "—" : reason);
-        return call("POST", "/v2/reports", body).thenApply(o -> null);
     }
 
     public CompletableFuture<SolveResult> solve(String postId) {

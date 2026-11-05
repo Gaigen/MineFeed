@@ -51,8 +51,15 @@ public final class AccountUi {
             }
             case "bad_code":
                 return Component.translatable("feed.account.error.bad_code");
-            case "banned":
-                return Component.translatable("feed.account.error.banned");
+            case "banned": {
+                Long until = e.longExtra("until");
+                Component base = until == null ? Component.translatable("feed.account.error.banned_forever")
+                        : Component.translatable("feed.account.error.banned_until", date(until));
+                String reason = e.extra.has("reason") && e.extra.get("reason").isJsonPrimitive()
+                        ? e.extra.get("reason").getAsString() : null;
+                return reason == null || reason.isBlank() ? base
+                        : Component.translatable("feed.account.error.banned_reason", base, reason);
+            }
             case "bad_auth":
             case "no_auth":
                 return Component.translatable("feed.account.error.session_lost");

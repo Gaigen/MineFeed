@@ -37,7 +37,8 @@ public final class CommunityApi {
 
     public record Pending(String id, String name) {}
 
-    public record Mine(List<Community> communities, List<Pending> pending, Application application, boolean canApply) {}
+    public record Mine(List<Community> communities, List<Pending> pending, Application application, boolean canApply,
+                       boolean moderator, int reportsOpen) {}
 
     public record Code(String code, String note, int uses, Integer maxUses, Long expiresAt, boolean approval, boolean dead) {}
 
@@ -68,6 +69,39 @@ public final class CommunityApi {
             }
         }
         return null;
+    }
+
+    /** Server-wide moderator (from the last /v2/communities answer). */
+    public static boolean serverMod() {
+        Mine m = cached;
+        return previewMod || m != null && m.moderator();
+    }
+
+    /** Dev preview only (DevPreview, -Dminefeed.preview): show moderator UI without the server flag. */
+    public static volatile boolean previewMod;
+
+    /** Can moderate posts in this space: server moderators everywhere, community owners/mods in theirs. */
+    public static boolean canModerate(String space) {
+        if (serverMod()) {
+            return true;
+        }
+        Community c = space == null || "global".equals(space) ? null : cachedById(space);
+        return c != null && c.isMod();
+    }
+
+    /** Sees the moderation page: server moderator or owner/mod of any community. */
+    public static boolean anyModeration() {
+        Mine m = cached;
+        return previewMod || m != null && (m.moderator() || m.communities().stream().anyMatch(Community::isMod));
+    }
+
+    /** Local badge update after handling reports, until the next refresh. */
+    public static void reportsHandled(int n) {
+        Mine m = cached;
+        if (m != null) {
+            cached = new Mine(m.communities(), m.pending(), m.application(), m.canApply(), m.moderator(),
+                    Math.max(0, m.reportsOpen() - n));
+        }
     }
 
     private static AccountApi api() {
@@ -103,7 +137,7 @@ public final class CommunityApi {
                 JsonObject a = o.getAsJsonObject("application");
                 app = new Application(str(a, "id"), str(a, "name"), str(a, "status"), str(a, "reason"), str(a, "communityId"));
             }
-            Mine m = new Mine(list, pending, app, bool(o, "canApply"));
+            Mine m = new Mine(list, pending, app, bool(o, "canApply"), bool(o, "moderator"), num(o, "reportsOpen"));
             cached = m;
             return m;
         });
