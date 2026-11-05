@@ -100,8 +100,8 @@ public final class FeedConfig {
         client.pop();
 
         client.translation(T + "templates").push("templates");
-        DEATH_TEMPLATE = client.comment("Death post prefill. Variables: {message}, {player}")
-                .translation(T + "deathTemplate").define("deathTemplate", "{message}");
+        DEATH_TEMPLATE = client.comment("Death post prefill. Variables: {message}, {player}, {coords} (where you died)")
+                .translation(T + "deathTemplate").define("deathTemplate", "{message} {coords}");
         ADVANCEMENT_TEMPLATE = client.comment("Advancement post prefill. Variables: {advancement}, {player}")
                 .translation(T + "advancementTemplate").define("advancementTemplate", "{advancement}");
         client.pop();
@@ -169,7 +169,7 @@ public final class FeedConfig {
     public static String toastTitleTemplate() { return get(TOAST_TITLE_TEMPLATE, "→ «{post}»"); }
     public static String toastBodyTemplate() { return get(TOAST_BODY_TEMPLATE, "{author}: {message}"); }
     public static String chatTemplate() { return get(CHAT_TEMPLATE, "[MineFeed] {author}: {message}"); }
-    public static String deathTemplate() { return get(DEATH_TEMPLATE, "{message}"); }
+    public static String deathTemplate() { return get(DEATH_TEMPLATE, "{message} {coords}"); }
     public static String advancementTemplate() { return get(ADVANCEMENT_TEMPLATE, "{advancement}"); }
 
     public static String theme() { return get(THEME, "dark"); }

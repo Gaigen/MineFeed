@@ -22,10 +22,13 @@ import java.util.List;
  * so the UI can be checked without loading a world (every time the title screen shows up).
  * F8 / F7 on a feed page open a sample community as its owner / as a member (fixed data),
  * F9 the moderation queue with sample reports, F6 the report dialog (nothing is sent),
- * F10 shows the last loaded post as pinned (local only).
+ * F10 shows the last loaded post as pinned (local only), F4 goes to the real title screen (to open a world).
  */
 @EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class DevPreview {
+
+    /** F4 was pressed: let the vanilla title screen stay (once a world is open the feed works as usual). */
+    private static boolean realTitle;
 
     private DevPreview() {
     }
@@ -36,7 +39,7 @@ public final class DevPreview {
 
     @SubscribeEvent
     public static void onScreenInit(ScreenEvent.Init.Post event) {
-        if (!on() || !(event.getScreen() instanceof TitleScreen)) {
+        if (!on() || realTitle || !(event.getScreen() instanceof TitleScreen)) {
             return;
         }
         event.getScreen().getMinecraft().tell(() -> event.getScreen().getMinecraft().setScreen(new FeedScreen()));
@@ -48,6 +51,12 @@ public final class DevPreview {
             return;
         }
         int k = event.getKeyCode();
+        if (k == GLFW.GLFW_KEY_F4 && Minecraft.getInstance().level == null) {
+            realTitle = true;
+            Minecraft.getInstance().setScreen(new TitleScreen());
+            event.setCanceled(true);
+            return;
+        }
         if (k == GLFW.GLFW_KEY_F9 || k == GLFW.GLFW_KEY_F6) {
             FeedScreen home = event.getScreen() instanceof FeedScreen f ? f : new FeedScreen();
             if (k == GLFW.GLFW_KEY_F9) {

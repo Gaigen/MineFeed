@@ -47,8 +47,11 @@ public final class DeathHook {
         if (mc.player == null) {
             return;
         }
+        var pos = mc.player.blockPosition();
+        String coords = mc.level == null ? "" : com.feed.client.screen.TagText.coords(pos.getX(), pos.getY(), pos.getZ(),
+                mc.level.dimension().location().toString());
         String message = MessageTemplate.render(FeedConfig.deathTemplate(), java.util.Map.of(
-                "message", deathMessage(screen, mc), "player", mc.getUser().getName()));
+                "message", deathMessage(screen, mc), "player", mc.getUser().getName(), "coords", coords)).strip();
         event.addListener(new RetroButton(screen.width / 2 - 100, screen.height / 4 + 120, 200, 18,
                 Component.translatable("feed.screen.death.post"), b -> {
             pending = message;
