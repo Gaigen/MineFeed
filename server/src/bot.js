@@ -70,7 +70,15 @@ async function onMessage(env, d, ctx, now) {
 
   if (d.id === d.channel_id) {
     // someone opened a new forum post right in Discord
-    const found = await env.DB.prepare("SELECT id, tags FROM spaces WHERE forum_id = ?").bind(String(d.parent_id || "")).first();
+    const parent = String(d.parent_id || "");
+    let found = await env.DB.prepare("SELECT id, tags FROM spaces WHERE forum_id = ?").bind(parent).first();
+    if (!found && parent && (parent === env.FEED_FORUM_ID || parent === env.FEED18_FORUM_ID)) {
+      // nobody has posted from the mod yet: the row of the space is made on first use
+      const sid = parent === env.FEED_FORUM_ID ? "global" : "global18";
+      await env.DB.prepare("INSERT OR IGNORE INTO spaces (id, forum_id, tags) VALUES (?, ?, ?)")
+        .bind(sid, parent, (sid === "global" ? env.FEED_TAGS : env.FEED18_TAGS) || "{}").run();
+      found = await env.DB.prepare("SELECT id, tags FROM spaces WHERE forum_id = ?").bind(parent).first();
+    }
     if (!found) return "skip";
     // the 18+ forum feeds the global feed as 18+ posts
     const nsfw = found.id === "global18" ? 1 : 0;

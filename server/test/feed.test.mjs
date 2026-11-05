@@ -16,6 +16,8 @@ function setup() {
     DB: makeD1(MIG),
     FEED_FORUM_ID: "900",
     FEED_TAGS: JSON.stringify({ rip: "t1", help: "t2", gg: "t3", talk: "t4", solved: "t5" }),
+    FEED18_FORUM_ID: "901",
+    FEED18_TAGS: JSON.stringify({ rip: "n1", help: "n2", gg: "n3", talk: "n4", solved: "n5", nsfw: "n6" }),
     REPORT_CHANNEL_ID: "777",
     DISCORD_GUILD_ID: "1",
     BOT_SECRET: "bot-secret-0123456789",
@@ -29,7 +31,8 @@ function setup() {
         return Response.json({ refreshed_urls: body.attachment_urls.map((o) => ({ original: o, refreshed: o.replace(/ex=[0-9a-f]+/, "ex=ffffffff") })) });
       }
       if (init.method === "POST" && u.pathname === "/api/v10/channels/900/webhooks") return Response.json({ id: "wh1", token: "tok" });
-      if (init.method === "POST" && u.pathname === "/api/v10/webhooks/wh1/tok") {
+      if (init.method === "POST" && u.pathname === "/api/v10/channels/901/webhooks") return Response.json({ id: "wh2", token: "tok2" });
+      if (init.method === "POST" && (u.pathname === "/api/v10/webhooks/wh1/tok" || u.pathname === "/api/v10/webhooks/wh2/tok2")) {
         const id = String(seq++);
         const thread = u.searchParams.get("thread_id");
         if (thread === "404") return new Response("{}", { status: 404 });
@@ -434,3 +437,60 @@ test("polls, pins and top", async () => {
   top = (await api("GET", "/v2/feed?sort=top&days=7", { key: a.key, now: T0 + 2 * 86_400_000 })).data;
   assert.equal(top.posts.length, 2);
 });
+
+test("18+ posts and spoilers", async () => {
+  const { api, user, calls } = setup();
+  const a = await user("adult");
+  const b = await user("kid");
+  // without the setting an 18+ post is refused
+  assert.equal((await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "x", nsfw: true } })).data.code, "need_18");
+  const on = await api("PATCH", "/v2/me", { key: a.key, body: { showNsfw: true } });
+  assert.equal(on.data.account.showNsfw, true);
+  const r = await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "взрослое @kid", nsfw: true }, now: T0 + 1000 });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.post.nsfw, true);
+  // it goes to the separate age-restricted forum with its tags
+  const hook = calls.find((c) => c.path === "/api/v10/webhooks/wh2/tok2");
+  assert.deepEqual(hook.body.applied_tags, ["n3", "n6"]);
+  await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "обычное" }, now: T0 + 2000 });
+
+  const feedA = (await api("GET", "/v2/feed", { key: a.key, now: T0 + 3000 })).data.posts;
+  const feedB = (await api("GET", "/v2/feed", { key: b.key, now: T0 + 3000 })).data.posts;
+  assert.equal(feedA.length, 2);
+  assert.deepEqual(feedB.map((p) => p.text), ["обычное"]);
+  assert.ok((await api("GET", "/v2/feed?sort=top", { key: b.key, now: T0 + 3000 })).data.posts.every((p) => !p.nsfw));
+  // the mention of a player who hides 18+ is not delivered
+  const nb = (await api("GET", "/v2/notifications", { key: b.key, now: T0 + 3000 })).data;
+  assert.equal((nb.notifications || nb.items || []).length, 0);
+
+  // comments of an 18+ post go through the 18+ forum webhook
+  const pid = r.data.post.id;
+  assert.equal((await api("POST", `/v2/posts/${pid}/comments`, { key: a.key, body: { text: "ком" }, now: T0 + 4000 })).status, 201);
+  assert.ok(calls.some((c) => c.path === "/api/v10/webhooks/wh2/tok2" && c.search.includes(pid)));
+
+  // a spoiler picture: Discord blurs files named SPOILER_*
+  const s = await api("POST", "/v2/posts", { key: b.key, body: { type: "gg", text: "", image: { type: "image/png", data: PNG, spoiler: true } }, now: T0 + 5000 });
+  assert.equal(s.status, 201, JSON.stringify(s.data));
+  assert.equal(s.data.post.image[0].spoiler, true);
+  const up = calls.filter((c) => c.files.length).pop();
+  assert.equal(up.files[0].name, "SPOILER_screenshot.png");
+  assert.equal(up.path, "/api/v10/webhooks/wh1/tok");
+});
+
+test("18+ posts written in Discord", async () => {
+  const { api, env } = setup();
+  const b = await user0(api);
+  const auth = `Bearer ${env.BOT_SECRET}`;
+  const tid = "1600000000000000001";
+  await api("POST", "/v2/bot/events", { auth, body: { events: [{ t: "MESSAGE_CREATE", d: { id: tid, channel_id: tid, parent_id: "901", thread_name: "Из 18+", applied_tags: ["n2"], content: "текст", author: { id: "d-z", username: "z" } } }] }, now: T0 + 1000 });
+  const row = await env.DB.prepare("SELECT space, nsfw, type FROM posts WHERE id = ?").bind(tid).first();
+  assert.deepEqual({ ...row }, { space: "global", nsfw: 1, type: "help" });
+  assert.equal((await api("GET", "/v2/feed", { key: b.key, now: T0 + 2000 })).data.posts.length, 0);
+  await api("PATCH", "/v2/me", { key: b.key, body: { showNsfw: true } });
+  assert.equal((await api("GET", "/v2/feed", { key: b.key, now: T0 + 2000 })).data.posts.length, 1);
+});
+
+async function user0(api) {
+  const r = await api("POST", "/v2/auth/register", { body: { tag: "viewer", nick: "V" } });
+  return { key: r.data.key };
+}

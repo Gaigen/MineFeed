@@ -395,3 +395,34 @@ test("moderation: reports queue, resolve, bans", async () => {
   assert.equal((await api("GET", `/v2/communities/${cid}`, { key: c.key })).status, 404);
   assert.equal((await api("POST", "/v2/join", { key: c.key, body: { code } })).data.code, "banned_here");
 });
+
+test("18+ communities", async () => {
+  const { api, user, community, env, calls } = setup();
+  const a = await user("alice", "d-alice");
+  const b = await user("bob", "d-bob");
+  const cid = await community(a, "Nochnye");
+  const forum = (await env.DB.prepare("SELECT forum_id FROM communities WHERE id = ?").bind(cid).first()).forum_id;
+
+  // the owner turns it on: the Discord forum becomes age-restricted
+  const on = await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { nsfw: true } });
+  assert.equal(on.data.community.nsfw, true);
+  assert.ok(calls.some((c) => c.m === "PATCH" && c.p === `/channels/${forum}` && c.body.nsfw === true));
+  // only a server moderator can take it off
+  assert.equal((await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { nsfw: false } })).data.code, "nsfw_locked");
+
+  // posts inside are not marked one by one, and "nsfw" outside an 18+ community is refused
+  const p = await api("POST", "/v2/posts", { key: a.key, body: { space: cid, type: "talk", text: "x" } });
+  assert.equal(p.status, 201);
+  assert.equal(p.data.post.nsfw, undefined);
+
+  // joining asks for the 18+ setting
+  const code = (await api("POST", `/v2/communities/${cid}/codes`, { key: a.key, body: {} })).data.code.code;
+  assert.equal((await api("POST", "/v2/join", { key: b.key, body: { code } })).data.code, "need_18");
+  await api("PATCH", "/v2/me", { key: b.key, body: { showNsfw: true } });
+  assert.equal((await api("POST", "/v2/join", { key: b.key, body: { code } })).data.status, "joined");
+
+  // a server moderator (here the owner is made one) can take the mark off
+  await env.DB.prepare("UPDATE accounts SET moderator = 1 WHERE id = ?").bind(a.id).run();
+  const off = await api("PATCH", `/v2/communities/${cid}`, { key: a.key, body: { nsfw: false } });
+  assert.equal(off.data.community.nsfw, false);
+});
