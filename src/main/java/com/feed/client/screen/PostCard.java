@@ -22,7 +22,9 @@ public final class PostCard {
     private static final int TEXT_TOP = 28;
     private static final int FOOTER = 18;
 
-    public enum Kind { CARD, AUTHOR, MENTION, HASHTAG, REACTION, IMAGE, COMMENTS }
+    public enum Kind { CARD, AUTHOR, MENTION, HASHTAG, COORDS, POLL, REACTION, IMAGE, COMMENTS }
+
+    public static final int POLL_ROW = 14;
 
     public record Hit(Kind kind, String value) {}
 
@@ -47,7 +49,16 @@ public final class PostCard {
             ih = s[1];
             h += ih + 6;
         }
+        h += pollHeight(post);
         return new Layout(post, lines, w, h + FOOTER, iw, ih);
+    }
+
+    private static int pollHeight(Post post) {
+        return post.hasPoll() ? 2 + post.pollOptions.size() * POLL_ROW + 10 : 0;
+    }
+
+    private static int pollY(Layout l, int y) {
+        return footerY(l, y) - 1 - pollHeight(l.post());
     }
 
     private static String author(Post p) {
@@ -96,8 +107,14 @@ public final class PostCard {
         if (!handle.isEmpty() && hx + font.width(handle) < chipX - 4) {
             g.drawString(font, handle, hx, y + PAD, RetroUi.GRAY, false);
         }
-        String meta = FeedTime.ago(post.createdAt) + (spaceName != null ? " \u00b7 " + spaceName : "");
-        g.drawString(font, FeedUtil.clip(font, meta, Math.max(20, chipX - nx - 4)), nx, y + PAD + 9, RetroUi.GRAY, false);
+        String meta = FeedTime.ago(post.createdAt) + (spaceName != null ? " \u00b7 " + spaceName : "")
+                + (post.edited ? " \u00b7 " + net.minecraft.network.chat.Component.translatable("feed.post.edited").getString() : "");
+        int mx = nx;
+        if (post.pinned) {
+            PixelIcon.draw(g, "pin", mx, y + PAD + 9, RetroUi.ACCENT);
+            mx += 10;
+        }
+        g.drawString(font, FeedUtil.clip(font, meta, Math.max(20, chipX - mx - 4)), mx, y + PAD + 9, RetroUi.GRAY, false);
         RetroUi.drawChip(g, font, post.displayPrefix(), chipX, y + PAD, post.prefixColor(), false, cardBg);
 
         int ly = y + TEXT_TOP;
@@ -119,6 +136,10 @@ public final class PostCard {
             }
         }
 
+        if (post.hasPoll()) {
+            drawPoll(g, font, post, x + PAD, pollY(l, y), w - PAD * 2, interactive, mouseX, mouseY, cardBg);
+        }
+
         int by = footerY(l, y);
         int rx = x + PAD;
         for (String key : type.reactions()) {
@@ -137,6 +158,40 @@ public final class PostCard {
         g.drawString(font, cc, rx + 13, by + 2, RetroUi.GRAY, false);
     }
 
+    /** Before voting: option buttons; after (or on a closed question): bars with percentages, my choice marked. */
+    private static void drawPoll(GuiGraphics g, Font font, Post post, int x, int y, int w, boolean interactive,
+                                 int mouseX, int mouseY, int cardBg) {
+        int total = post.pollTotal();
+        boolean results = post.pollMy >= 0 || post.solved || FeedApiClient.isMine(post.uuid);
+        int oy = y + 2;
+        for (int i = 0; i < post.pollOptions.size(); i++) {
+            boolean hover = interactive && !post.solved && mouseX >= x && mouseX < x + w && mouseY >= oy && mouseY < oy + POLL_ROW - 2;
+            boolean mine = i == post.pollMy;
+            int rowH = POLL_ROW - 2;
+            g.fill(x, oy, x + w, oy + rowH, cardBg);
+            if (results && total > 0) {
+                int fw = (int) Math.round((double) w * post.pollVotes[i] / total);
+                if (fw > 0) {
+                    g.fill(x, oy, x + fw, oy + rowH, mine ? (RetroUi.ACCENT & 0x00FFFFFF) | 0x55000000 : (RetroUi.GRAY & 0x00FFFFFF) | 0x40000000);
+                }
+            }
+            g.renderOutline(x, oy, w, rowH, mine ? RetroUi.ACCENT : hover ? RetroUi.FG : RetroUi.GRAY);
+            String label = (mine ? "\u2713 " : "") + post.pollOptions.get(i);
+            String right = results ? (total > 0 ? Math.round(100.0 * post.pollVotes[i] / total) + "%" : "0%") : "";
+            int rw = font.width(right);
+            g.drawString(font, FeedUtil.clip(font, label, w - 12 - rw), x + 4, oy + 2, mine ? RetroUi.ACCENT : RetroUi.FG, false);
+            if (!right.isEmpty()) {
+                g.drawString(font, right, x + w - 4 - rw, oy + 2, RetroUi.GRAY, false);
+            }
+            oy += POLL_ROW;
+        }
+        String info = net.minecraft.network.chat.Component.translatable("feed.poll.votes", total).getString()
+                + (post.solved ? " \u00b7 " + net.minecraft.network.chat.Component.translatable("feed.poll.closed").getString()
+                : !results ? " \u00b7 " + net.minecraft.network.chat.Component.translatable("feed.poll.hint").getString() : "");
+        PixelIcon.draw(g, "poll", x, oy, RetroUi.GRAY);
+        g.drawString(font, FeedUtil.clip(font, info, w - 10), x + 10, oy, RetroUi.GRAY, false);
+    }
+
     /** Text with @mentions in the accent color and #hashtags in cyan. */
     public static void drawRich(GuiGraphics g, Font font, String line, int x, int y, int color) {
         drawRich(g, font, line, x, y, color, -1, -1);
@@ -149,6 +204,7 @@ public final class PostCard {
             int c = switch (seg.kind()) {
                 case MENTION -> RetroUi.ACCENT;
                 case HASHTAG -> RetroUi.CYAN;
+                case COORDS -> AccountUi.GREEN;
                 default -> color;
             };
             int w = font.width(seg.text());
@@ -168,6 +224,7 @@ public final class PostCard {
                 return switch (seg.kind()) {
                     case MENTION -> "@" + trimMention(seg.text());
                     case HASHTAG -> "#" + TagText.normalizeHashtag(seg.text());
+                    case COORDS -> "~" + seg.text().substring(1, seg.text().length() - 1);
                     default -> null;
                 };
             }
@@ -203,13 +260,22 @@ public final class PostCard {
             int index = (int) ((mouseY - ly) / LINE);
             String link = linkAt(font, l.lines().get(index), x + PAD, mouseX);
             if (link != null) {
-                return link.startsWith("#") ? new Hit(Kind.HASHTAG, link.substring(1)) : new Hit(Kind.MENTION, link.substring(1));
+                return new Hit(link.startsWith("#") ? Kind.HASHTAG : link.startsWith("~") ? Kind.COORDS : Kind.MENTION, link.substring(1));
             }
         }
         if (post.imageUrl != null) {
             int iy = imageY(l, y);
             if (mouseX >= x + PAD && mouseX < x + PAD + l.imgW() && mouseY >= iy && mouseY < iy + l.imgH()) {
                 return new Hit(Kind.IMAGE, post.imageUrl);
+            }
+        }
+        if (post.hasPoll() && !post.solved) {
+            int oy = pollY(l, y) + 2;
+            for (int i = 0; i < post.pollOptions.size(); i++) {
+                if (mouseX >= x + PAD && mouseX < x + l.w() - PAD && mouseY >= oy && mouseY < oy + POLL_ROW - 2) {
+                    return new Hit(Kind.POLL, String.valueOf(i));
+                }
+                oy += POLL_ROW;
             }
         }
         int by = footerY(l, y);

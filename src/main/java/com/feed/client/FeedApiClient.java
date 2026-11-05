@@ -225,8 +225,55 @@ public final class FeedApiClient {
                 r.posts.add(toPost(e.getAsJsonObject()));
             }
             r.nextCursor = str(o, "next");
+            if (o.has("pinned") && o.get("pinned").isJsonArray()) {
+                r.pinned = new ArrayList<>();
+                for (JsonElement e : o.getAsJsonArray("pinned")) {
+                    r.pinned.add(toPost(e.getAsJsonObject()));
+                }
+            }
             return new FeedPage(r, false);
         });
+    }
+
+    /** Most reacted/commented posts of the last day (days=1) or week (days=7). */
+    public CompletableFuture<FeedPage> fetchTop(String space, int days) {
+        String path = "/v2/feed?space=" + (space == null ? "global" : space) + "&sort=top&limit=30&days=" + days;
+        return call("GET", path, null).thenApply(o -> {
+            FeedResponse r = new FeedResponse();
+            r.posts = new ArrayList<>();
+            for (JsonElement e : o.getAsJsonArray("posts")) {
+                r.posts.add(toPost(e.getAsJsonObject()));
+            }
+            return new FeedPage(r, false);
+        });
+    }
+
+    public CompletableFuture<Post> editPost(String postId, String text) {
+        JsonObject body = new JsonObject();
+        body.addProperty("text", text);
+        return call("PATCH", "/v2/posts/" + postId, body).thenApply(o -> toPost(o.getAsJsonObject("post")));
+    }
+
+    public CompletableFuture<Comment> editComment(String commentId, String text) {
+        JsonObject body = new JsonObject();
+        body.addProperty("text", text);
+        return call("PATCH", "/v2/comments/" + commentId, body).thenApply(o -> toComment(o.getAsJsonObject("comment")));
+    }
+
+    /** Votes for option (or -1 to take the vote back) and updates the post in place. */
+    public CompletableFuture<Post> vote(Post post, int option) {
+        JsonObject body = new JsonObject();
+        body.addProperty("option", option);
+        return call("POST", "/v2/posts/" + post.id + "/vote", body).thenApply(o -> {
+            applyPoll(post, o.getAsJsonObject("poll"));
+            return post;
+        });
+    }
+
+    public CompletableFuture<Post> pin(String postId, boolean pinned) {
+        JsonObject body = new JsonObject();
+        body.addProperty("pinned", pinned);
+        return call("POST", "/v2/posts/" + postId + "/pin", body).thenApply(o -> toPost(o.getAsJsonObject("post")));
     }
 
     public CompletableFuture<Post> createPost(String text, PostType type) {
@@ -239,7 +286,19 @@ public final class FeedApiClient {
 
     /** imageJpeg: base64 JPEG from PostImages.encodeForUpload, or null. */
     public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg) {
+        return createPost(space, text, type, imageJpeg, null);
+    }
+
+    /** pollOptions: 2-4 options, or null for no poll. */
+    public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg, List<String> pollOptions) {
         JsonObject body = new JsonObject();
+        if (pollOptions != null && !pollOptions.isEmpty()) {
+            JsonObject poll = new JsonObject();
+            JsonArray arr = new JsonArray();
+            pollOptions.forEach(arr::add);
+            poll.add("options", arr);
+            body.add("poll", poll);
+        }
         body.addProperty("space", space == null ? "global" : space);
         body.addProperty("type", type.id);
         body.addProperty("text", text);
@@ -400,6 +459,11 @@ public final class FeedApiClient {
         p.tags = List.of();
         p.solved = bool(o, "solved");
         p.space = str(o, "space");
+        p.edited = o.has("editedAt") && !o.get("editedAt").isJsonNull();
+        p.pinned = bool(o, "pinned");
+        if (o.has("poll") && o.get("poll").isJsonObject()) {
+            applyPoll(p, o.getAsJsonObject("poll"));
+        }
         JsonObject img = firstImage(o);
         if (img != null) {
             p.imageUrl = str(img, "url");
@@ -407,6 +471,21 @@ public final class FeedApiClient {
             p.imageH = img.has("h") ? img.get("h").getAsInt() : 0;
         }
         return p;
+    }
+
+    private static void applyPoll(Post p, JsonObject poll) {
+        List<String> options = new ArrayList<>();
+        for (JsonElement e : poll.getAsJsonArray("options")) {
+            options.add(e.getAsString());
+        }
+        JsonArray votes = poll.getAsJsonArray("votes");
+        int[] v = new int[options.size()];
+        for (int i = 0; i < v.length && i < votes.size(); i++) {
+            v[i] = votes.get(i).getAsInt();
+        }
+        p.pollOptions = options;
+        p.pollVotes = v;
+        p.pollMy = poll.has("my") ? poll.get("my").getAsInt() : -1;
     }
 
     private static List<Comment> comments(JsonObject o) {
@@ -428,6 +507,7 @@ public final class FeedApiClient {
         c.authorTag = str(a, "tag");
         c.avatar = str(a, "avatar");
         c.createdAt = iso(o.get("createdAt").getAsLong());
+        c.edited = o.has("editedAt") && !o.get("editedAt").isJsonNull();
         JsonObject img = firstImage(o);
         if (img != null) {
             c.imageUrl = str(img, "url");

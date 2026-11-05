@@ -23,8 +23,29 @@ public class Post {
     public String imageUrl; // first picture (Discord CDN), null when none
     public int imageW;
     public int imageH;
+    public boolean edited;
+    public boolean pinned;
+    /** Poll options, or null when the post has no poll. */
+    public List<String> pollOptions;
+    public int[] pollVotes;
+    /** Index of my vote, -1 = not voted. */
+    public int pollMy = -1;
 
     public Post() {
+    }
+
+    public boolean hasPoll() {
+        return pollOptions != null && !pollOptions.isEmpty();
+    }
+
+    public int pollTotal() {
+        int t = 0;
+        if (pollVotes != null) {
+            for (int v : pollVotes) {
+                t += v;
+            }
+        }
+        return t;
     }
 
     public PostType postType() {

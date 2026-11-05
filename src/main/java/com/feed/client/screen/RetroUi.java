@@ -133,14 +133,25 @@ public final class RetroUi {
         g.drawString(font, text, x + font.width("_ "), y, color, false);
     }
 
+    private static final java.util.regex.Pattern COORDS =
+            java.util.regex.Pattern.compile("\\[-?\\d{1,8} -?\\d{1,4} -?\\d{1,8}(?: (?:nether|end))?]");
+
     public static java.util.List<String> wrap(Font font, String text, int width) {
         java.util.List<String> lines = new java.util.ArrayList<>();
         if (text == null) {
             return lines;
         }
-        for (String raw : text.split("\n")) {
+        // coordinates "[x y z]" never break across lines
+        java.util.regex.Matcher m = COORDS.matcher(text);
+        StringBuilder glued = new StringBuilder();
+        while (m.find()) {
+            m.appendReplacement(glued, java.util.regex.Matcher.quoteReplacement(m.group().replace(' ', '\u0001')));
+        }
+        m.appendTail(glued);
+        for (String raw : glued.toString().split("\n")) {
             StringBuilder line = new StringBuilder();
-            for (String word : raw.split(" ")) {
+            for (String rawWord : raw.split(" ")) {
+                String word = rawWord.replace('\u0001', ' ');
                 String candidate = line.isEmpty() ? word : line + " " + word;
                 if (font.width(candidate) > width && !line.isEmpty()) {
                     lines.add(line.toString());

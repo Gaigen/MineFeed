@@ -599,6 +599,8 @@ public class PostScreen extends ShellScreen {
             switch (hit.kind()) {
                 case AUTHOR, MENTION -> openPlayer(hit.value());
                 case HASHTAG -> openHashtag(post.space, hit.value());
+                case COORDS -> com.feed.client.PostActions.copyCoords(hit.value());
+                case POLL -> com.feed.client.PostActions.vote(post, Integer.parseInt(hit.value()), this::relayout);
                 case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
                 case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
                 default -> {
@@ -636,7 +638,9 @@ public class PostScreen extends ShellScreen {
             if (mouseY >= ly && mouseY < ly + row.lines().size() * COMMENT_LINE) {
                 String link = PostCard.linkAt(this.font, row.lines().get((int) ((mouseY - ly) / COMMENT_LINE)), x + 25, mouseX);
                 if (link != null) {
-                    if (link.startsWith("#")) {
+                    if (link.startsWith("~")) {
+                        com.feed.client.PostActions.copyCoords(link.substring(1));
+                    } else if (link.startsWith("#")) {
                         openHashtag(post.space, link.substring(1));
                     } else {
                         openPlayer(link.substring(1));

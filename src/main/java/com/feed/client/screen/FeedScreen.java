@@ -782,6 +782,8 @@ public class FeedScreen extends ShellScreen {
         switch (hit.kind()) {
             case AUTHOR, MENTION -> openProfile(hit.value());
             case HASHTAG -> openHashtag(space, hit.value());
+            case COORDS -> com.feed.client.PostActions.copyCoords(hit.value());
+            case POLL -> com.feed.client.PostActions.vote(post, Integer.parseInt(hit.value()), this::relayout);
             case REACTION -> ReactionHelper.toggle(post, hit.value(), null);
             case IMAGE -> this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
             default -> this.minecraft.setScreen(new PostScreen(this, post));

@@ -12,4 +12,5 @@ public class Comment {
     public String imageUrl;
     public int imageW;
     public int imageH;
+    public boolean edited;
 }

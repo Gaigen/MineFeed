@@ -10,10 +10,11 @@ import java.util.regex.Pattern;
 public final class TagText {
 
     private static final Pattern TAG_PATTERN = Pattern.compile(
-            "@[A-Za-z0-9_.]{2,32}|(?<![\\p{L}\\p{N}_&#/])#[\\p{L}\\p{N}_]{2,32}(?![\\p{L}\\p{N}_])",
+            "@[A-Za-z0-9_.]{2,32}|(?<![\\p{L}\\p{N}_&#/])#[\\p{L}\\p{N}_]{2,32}(?![\\p{L}\\p{N}_])"
+                    + "|\\[-?\\d{1,8} -?\\d{1,4} -?\\d{1,8}(?: (?:nether|end))?]",
             Pattern.UNICODE_CHARACTER_CLASS);
 
-    public enum Kind { TEXT, MENTION, HASHTAG }
+    public enum Kind { TEXT, MENTION, HASHTAG, COORDS }
 
     public record Seg(String text, Kind kind) {
         public boolean tag() {
@@ -30,7 +31,7 @@ public final class TagText {
         int last = 0;
         while (m.find()) {
             String g = m.group();
-            Kind kind = g.startsWith("@") ? Kind.MENTION : Kind.HASHTAG;
+            Kind kind = g.startsWith("@") ? Kind.MENTION : g.startsWith("[") ? Kind.COORDS : Kind.HASHTAG;
             if (kind == Kind.HASHTAG && normalizeHashtag(g) == null) {
                 continue;
             }
@@ -44,6 +45,12 @@ public final class TagText {
             out.add(new Seg(line.substring(last), Kind.TEXT));
         }
         return out;
+    }
+
+    /** Coordinates as written in posts: "[x y z]" or "[x y z nether|end]". */
+    public static String coords(int x, int y, int z, String dimension) {
+        String d = "minecraft:the_nether".equals(dimension) ? " nether" : "minecraft:the_end".equals(dimension) ? " end" : "";
+        return "[" + x + " " + y + " " + z + d + "]";
     }
 
     /** "#Ёлка" -> "елка"; null if it is not a valid tag (needs a letter, 2-32 chars). */
