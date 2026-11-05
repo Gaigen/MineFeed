@@ -108,7 +108,7 @@ public class NotificationsScreen extends ShellScreen {
     private List<FeedApiClient.Notif> visible() {
         List<FeedApiClient.Notif> out = new ArrayList<>();
         for (FeedApiClient.Notif n : items) {
-            if (tab.accepts(n)) {
+            if (tab.accepts(n) && (!com.feed.client.HiddenPlayers.isHidden(n.actorId()) || isRequest(n))) {
                 out.add(n);
             }
         }

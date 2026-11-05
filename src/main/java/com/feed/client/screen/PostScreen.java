@@ -53,6 +53,10 @@ public class PostScreen extends ShellScreen {
     private RetroButton solveButton;
     private RetroButton deleteButton;
     private RetroButton reportButton;
+    private RetroButton pinButton;
+    private Suggest suggest;
+    /** Comment whose text is in the reply line for editing; null = writing a new one. */
+    private Comment editingComment;
 
     private int scroll;
     private int contentHeight;
@@ -105,12 +109,27 @@ public class PostScreen extends ShellScreen {
         addRenderableWidget(new RetroButton(x, 5, this.font.width(back) + 12, BTN_H, back, b -> onClose()));
 
         int right = x + w;
+        if (CommunityApi.canModerate(post.space)) {
+            right -= BTN_H + 4;
+            pinButton = addRenderableWidget(new RetroButton(right, 5, BTN_H + 4, BTN_H, Component.empty(), b -> togglePin())
+                    .icon("pin").color(post.pinned ? RetroUi.ACCENT : -1));
+            pinButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                    Component.translatable(post.pinned ? "feed.post.unpin" : "feed.post.pin")));
+            right -= 4;
+        }
         if (isOwn()) {
             Component del = Component.translatable("feed.screen.post.delete");
             int dw = this.font.width(del) + 12;
             right -= dw;
             deleteButton = addRenderableWidget(new RetroButton(right, 5, dw, BTN_H, del, b -> confirmDelete()));
             right -= 4;
+            if (!post.fromDiscord) {
+                Component edit = Component.translatable("feed.post.edit");
+                int ew = this.font.width(edit) + 16 + PixelIcon.SIZE;
+                right -= ew;
+                addRenderableWidget(new RetroButton(right, 5, ew, BTN_H, edit, b -> editPost()).icon("edit"));
+                right -= 4;
+            }
             if (post.postType() == PostType.HELP && !post.solved) {
                 Component solve = Component.translatable("feed.screen.post.solve");
                 int sw = this.font.width(solve) + 12;
@@ -151,6 +170,7 @@ public class PostScreen extends ShellScreen {
         input.setResponder(s -> error = null);
         input.visible = !post.solved;
         addRenderableWidget(input);
+        suggest = new Suggest(Suggest.of(input), () -> post.space == null ? "global" : post.space);
 
         relayout();
         if (!requested) {
@@ -189,6 +209,9 @@ public class PostScreen extends ShellScreen {
     @Override
     public void tick() {
         super.tick();
+        if (suggest != null && input != null && input.isFocused()) {
+            suggest.tick();
+        }
         if (!requested || loading || sending || loadingOlder || livePolling || post.solved) {
             return;
         }
@@ -219,6 +242,14 @@ public class PostScreen extends ShellScreen {
             if (c.id != null && known.add(c.id)) {
                 comments.add(c);
                 added = true;
+            } else if (c.id != null && c.edited) {
+                for (Comment old : comments) {
+                    if (c.id.equals(old.id) && !java.util.Objects.equals(old.text, c.text) && old != editingComment) {
+                        old.text = c.text;
+                        old.edited = true;
+                        relayout();
+                    }
+                }
             }
         }
         if (!added) {
@@ -265,6 +296,23 @@ public class PostScreen extends ShellScreen {
         }
         sending = true;
         error = null;
+        if (editingComment != null) {
+            Comment target = editingComment;
+            FeedApiClient.INSTANCE.editComment(target.id, text).whenComplete((comment, ex) ->
+                    this.minecraft.execute(() -> {
+                        sending = false;
+                        if (ex != null) {
+                            showError(FeedApiClient.unwrap(ex).userMessage());
+                            return;
+                        }
+                        target.text = comment.text;
+                        target.edited = true;
+                        editingComment = null;
+                        input.setValue("");
+                        relayout();
+                    }));
+            return;
+        }
         FeedApiClient.INSTANCE.createComment(post.id, text).whenComplete((comment, ex) ->
                 this.minecraft.execute(() -> {
                     sending = false;
@@ -294,6 +342,42 @@ public class PostScreen extends ShellScreen {
                     input.visible = false;
                     relayout();
                 }));
+    }
+
+    private void editPost() {
+        this.minecraft.setScreen(new ComposeScreen(this, post, spaceName() != null ? spaceName() : "", p -> {
+            home().updatePost(p);
+            relayout();
+        }));
+    }
+
+    private void togglePin() {
+        boolean want = !post.pinned;
+        pinButton.active = false;
+        FeedApiClient.INSTANCE.pin(post.id, want).whenComplete((p, ex) -> this.minecraft.execute(() -> {
+            pinButton.active = true;
+            if (ex != null) {
+                showError(FeedApiClient.unwrap(ex).userMessage());
+                return;
+            }
+            post.pinned = want;
+            error = Component.translatable(want ? "feed.post.pinned_done" : "feed.post.unpinned_done");
+            errorColor = AccountUi.GREEN;
+            home().refresh();
+            rebuildWidgets();
+        }));
+    }
+
+    private void startEditComment(Comment c) {
+        editingComment = c;
+        input.setValue(c.text != null ? c.text : "");
+        setFocused(input);
+        input.setFocused(true);
+    }
+
+    private void cancelEditComment() {
+        editingComment = null;
+        input.setValue("");
     }
 
     private void confirmDelete() {
@@ -340,6 +424,9 @@ public class PostScreen extends ShellScreen {
         }
         boolean mine = c.authorId != null && FeedApiClient.isMine(c.authorId);
         boolean mod = CommunityApi.canModerate(post.space);
+        if (mine && c.fromMod && !post.solved) {
+            out.add(new Action(tr("feed.comment.edit"), RetroUi.GRAY, () -> startEditComment(c)));
+        }
         if (mine || isOwn() || mod) {
             out.add(new Action(tr("feed.comment.delete"), RetroUi.ERROR, () -> confirmDeleteComment(c)));
         }
@@ -405,6 +492,9 @@ public class PostScreen extends ShellScreen {
         }
         rows.clear();
         for (Comment c : comments) {
+            if (com.feed.client.HiddenPlayers.isHidden(c.authorId) && !c.authorId.equals(post.uuid)) {
+                continue;
+            }
             List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", commentTextW());
             int iw = 0;
             int ih = 0;
@@ -507,6 +597,13 @@ public class PostScreen extends ShellScreen {
         g.disableScissor();
         drawScrollbar(g, top, bottom, scroll, contentHeight);
 
+        int sy = inputTop() - RetroUi.CHIP_H - 4;
+        if (!suggest.render(g, this.font, x + 4, sy, w - 8, mouseX, mouseY, RetroUi.PAGE) && editingComment != null) {
+            String tip = tr("feed.comment.editing");
+            g.fill(x, sy - 2, x + w, sy + RetroUi.CHIP_H + 2, RetroUi.PAGE);
+            g.drawString(this.font, FeedUtil.clip(this.font, tip, w - 8), x + 4, sy + 2, RetroUi.ACCENT, false);
+        }
+
         if (error != null) {
             String e = FeedUtil.clip(this.font, error.getString(), w - 12);
             int ew = this.font.width(e) + 10;
@@ -533,7 +630,7 @@ public class PostScreen extends ShellScreen {
         g.drawString(this.font, shown, nx, y, byAuthor ? RetroUi.ACCENT : nameHover ? RetroUi.STRONG : RetroUi.FG, false);
         nx += this.font.width(shown);
         String meta = (c.fromMod ? (c.authorTag != null ? " @" + c.authorTag : "") : " \u00b7 " + tr("feed.author.discord"))
-                + " \u00b7 " + FeedTime.ago(c.createdAt);
+                + " \u00b7 " + FeedTime.ago(c.createdAt) + (c.edited ? " \u00b7 " + tr("feed.post.edited") : "");
         g.drawString(this.font, FeedUtil.clip(this.font, meta, Math.max(10, x + contentWidth() - nx)), nx, y, RetroUi.GRAY, false);
         int ly = y + 10;
         for (String line : row.lines()) {
@@ -583,6 +680,11 @@ public class PostScreen extends ShellScreen {
         }
         int x = contentLeft();
         int w = contentWidth();
+        if (suggest.click(this.font, x + 4, inputTop() - RetroUi.CHIP_H - 4, w - 8, mouseX, mouseY)) {
+            setFocused(input);
+            input.setFocused(true);
+            return true;
+        }
         if (!post.solved && mouseY >= inputTop() && mouseY < inputTop() + INPUT_H && mouseX >= x && mouseX < x + w) {
             setFocused(input);
             input.setFocused(true);
@@ -662,6 +764,13 @@ public class PostScreen extends ShellScreen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_TAB && input.isFocused() && suggest.tab()) {
+            return true;
+        }
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE && editingComment != null) {
+            cancelEditComment();
+            return true;
+        }
         if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && input.visible && input.isFocused()) {
             send();
             return true;

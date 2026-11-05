@@ -40,6 +40,10 @@ public class FeedScreen extends ShellScreen {
     private static final long COMMUNITY_POLL_MS = 30_000L;
 
     private final List<Post> posts = new ArrayList<>();
+    /** Pinned posts of the space, shown above the feed (only on the plain feed). */
+    private final List<Post> pinned = new ArrayList<>();
+    /** "Top" tab: 1 = day, 7 = week, 0 = normal feed. */
+    private int topDays;
     private final List<Row> rows = new ArrayList<>();
 
     /** "global" or a community id. */
@@ -65,6 +69,7 @@ public class FeedScreen extends ShellScreen {
 
     private RetroButton settingsButton;
     private RetroButton banButton;
+    private RetroButton hideButton;
 
     private record Row(Post post, PostCard.Layout layout, int y) {
         int height() {
@@ -72,7 +77,7 @@ public class FeedScreen extends ShellScreen {
         }
     }
 
-    private record Tab(String label, int color, boolean active, PostType type, boolean mine) {}
+    private record Tab(String label, int color, boolean active, PostType type, boolean mine, int top) {}
 
     public FeedScreen() {
         super(Component.translatable("feed.brand.title"), null);
@@ -129,6 +134,7 @@ public class FeedScreen extends ShellScreen {
                 sw, BTN_H, settings, b -> this.minecraft.setScreen(new ProfileScreen(this))));
         banButton = addRenderableWidget(new RetroButton(0, PROFILE_CARD_Y + 6, 60, BTN_H, Component.empty(), b -> toggleBan())
                 .color(RetroUi.ERROR));
+        hideButton = addRenderableWidget(new RetroButton(0, PROFILE_CARD_Y + 6, 60, BTN_H, Component.empty(), b -> toggleHidden()));
         updateManageButton();
 
         relayout();
@@ -152,6 +158,22 @@ public class FeedScreen extends ShellScreen {
         if (settingsButton != null) {
             settingsButton.visible = profileKey != null && ownProfile();
         }
+        int right = contentLeft() + contentWidth() - 6;
+        if (hideButton != null) {
+            hideButton.visible = profile != null && profileKey != null && !ownProfile();
+            if (hideButton.visible) {
+                boolean hidden = com.feed.client.HiddenPlayers.isHidden(profile.id());
+                Component label = Component.translatable(hidden ? "feed.hide.unhide" : "feed.hide.hide");
+                int w = this.font.width(label) + 16 + PixelIcon.SIZE;
+                hideButton.setMessage(label);
+                hideButton.icon("eye");
+                hideButton.setWidth(w);
+                hideButton.setX(right - w);
+                hideButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable(hidden ? "feed.hide.unhide_tip" : "feed.hide.hide_tip")));
+                right -= w + 4;
+            }
+        }
         if (banButton != null) {
             banButton.visible = profile != null && profileKey != null && !ownProfile() && CommunityApi.serverMod()
                     && !profile.moderator();
@@ -160,7 +182,7 @@ public class FeedScreen extends ShellScreen {
                 int w = this.font.width(label) + 12;
                 banButton.setMessage(label);
                 banButton.setWidth(w);
-                banButton.setX(contentLeft() + contentWidth() - w - 6);
+                banButton.setX(right - w);
             }
         }
         if (c != null) {
@@ -196,7 +218,7 @@ public class FeedScreen extends ShellScreen {
         if (now - lastCommunityPoll > COMMUNITY_POLL_MS) {
             loadCommunities();
         }
-        if (loading || livePolling || posts.isEmpty() || profileKey != null) {
+        if (loading || livePolling || posts.isEmpty() || profileKey != null || topDays > 0) {
             return;
         }
         if (now - lastLivePoll < LIVE_POLL_MS) {
@@ -279,6 +301,24 @@ public class FeedScreen extends ShellScreen {
         this.minecraft.setScreen(new BanScreen(this, p.id(), p.nick(), null, null, until -> reloadProfile()));
     }
 
+    private void toggleHidden() {
+        FeedApiClient.Profile p = profile;
+        if (p == null) {
+            return;
+        }
+        if (com.feed.client.HiddenPlayers.isHidden(p.id())) {
+            com.feed.client.HiddenPlayers.unhide(p.id());
+            updateManageButton();
+            return;
+        }
+        this.minecraft.setScreen(new RetroConfirmScreen(this, Component.translatable("feed.hide.title"),
+                Component.translatable("feed.hide.confirm", p.nick()), Component.translatable("feed.hide.hide"), false, () -> {
+            com.feed.client.HiddenPlayers.hide(p.id(), p.nick());
+            this.minecraft.setScreen(this);
+            updateManageButton();
+        }));
+    }
+
     public void closeProfile() {
         profileKey = null;
         profile = null;
@@ -308,6 +348,7 @@ public class FeedScreen extends ShellScreen {
         hashtag = t;
         filter = null;
         mineOnly = false;
+        topDays = 0;
         updateManageButton();
         refresh();
     }
@@ -321,6 +362,7 @@ public class FeedScreen extends ShellScreen {
             space = s;
             filter = null;
             mineOnly = false;
+            topDays = 0;
         }
         updateManageButton();
         refresh();
@@ -334,6 +376,7 @@ public class FeedScreen extends ShellScreen {
             return;
         }
         posts.clear();
+        pinned.clear();
         nextCursor = null;
         scroll = 0;
         pendingNewAbove = 0;
@@ -367,6 +410,25 @@ public class FeedScreen extends ShellScreen {
         }
         String forSpace = space;
         String forTag = hashtag;
+        if (topDays > 0) {
+            int forDays = topDays;
+            FeedApiClient.INSTANCE.fetchTop(forSpace, forDays).whenComplete((page, ex) -> this.minecraft.execute(() -> {
+                if (!forSpace.equals(space) || forDays != topDays || profileKey != null) {
+                    return;
+                }
+                loading = false;
+                if (ex != null) {
+                    error = FeedApiClient.unwrap(ex).userMessage();
+                    return;
+                }
+                if (page.body() != null && page.body().posts != null) {
+                    posts.addAll(page.body().posts);
+                }
+                nextCursor = null;
+                relayout();
+            }));
+            return;
+        }
         FeedApiClient.INSTANCE.fetchFeed(forSpace, forTag, cursor, PAGE_SIZE, mineOnly, false)
                 .whenComplete((page, ex) -> this.minecraft.execute(() -> {
                     if (!forSpace.equals(space) || !Objects.equals(forTag, hashtag) || profileKey != null) {
@@ -382,6 +444,12 @@ public class FeedScreen extends ShellScreen {
                         return;
                     }
                     var resp = page.body();
+                    if (cursor == null) {
+                        pinned.clear();
+                        if (resp.pinned != null && forTag == null && !mineOnly) {
+                            pinned.addAll(resp.pinned);
+                        }
+                    }
                     if (resp.posts != null) {
                         posts.addAll(resp.posts);
                     }
@@ -429,6 +497,18 @@ public class FeedScreen extends ShellScreen {
                 brandNew.add(incoming);
                 continue;
             }
+            if (!Objects.equals(existing.text, incoming.text) || existing.edited != incoming.edited) {
+                existing.text = incoming.text;
+                existing.edited = incoming.edited;
+                existing.tags = incoming.tags;
+                updated = true;
+            }
+            if (incoming.hasPoll()) {
+                existing.pollOptions = incoming.pollOptions;
+                existing.pollVotes = incoming.pollVotes;
+                existing.pollMy = incoming.pollMy;
+                updated = true;
+            }
             if (existing.commentCount != incoming.commentCount
                     || existing.solved != incoming.solved
                     || !Objects.equals(existing.myReaction, incoming.myReaction)) {
@@ -461,11 +541,48 @@ public class FeedScreen extends ShellScreen {
         }
     }
 
+    /** After editing a post somewhere else: same object or a copy with the same id. */
+    public void updatePost(Post p) {
+        for (List<Post> list : List.of(posts, pinned)) {
+            for (Post mine : list) {
+                if (mine != p && mine.id != null && mine.id.equals(p.id)) {
+                    mine.text = p.text;
+                    mine.edited = p.edited;
+                    mine.tags = p.tags;
+                }
+            }
+        }
+        relayout();
+    }
+
+    private boolean showPinned() {
+        return profileKey == null && hashtag == null && !mineOnly && topDays == 0 && !pinned.isEmpty();
+    }
+
     private void relayout() {
         rows.clear();
         int y = 0;
+        java.util.Set<String> shown = new java.util.HashSet<>();
+        if (showPinned()) {
+            for (Post post : pinned) {
+                if (filter != null && post.postType() != filter) {
+                    continue;
+                }
+                post.pinned = true;
+                PostCard.Layout l = PostCard.layout(this.font, post, contentWidth(), this.height, false);
+                rows.add(new Row(post, l, y));
+                shown.add(post.id);
+                y += l.h() + CARD_GAP;
+            }
+        }
         for (Post post : posts) {
             if (filter != null && post.postType() != filter) {
+                continue;
+            }
+            if (post.id != null && shown.contains(post.id)) {
+                continue;
+            }
+            if (profileKey == null && com.feed.client.HiddenPlayers.isHidden(post.uuid)) {
                 continue;
             }
             PostCard.Layout l = PostCard.layout(this.font, post, contentWidth(), this.height, false);
@@ -532,7 +649,8 @@ public class FeedScreen extends ShellScreen {
         g.renderOutline(x + 6, y + 6, size, size, RetroUi.GRAY);
         int tx = x + 54;
         int nameRight = settingsButton != null && settingsButton.visible ? settingsButton.getX() - 6
-                : banButton != null && banButton.visible ? banButton.getX() - 6 : x + w - 6;
+                : banButton != null && banButton.visible ? banButton.getX() - 6
+                : hideButton != null && hideButton.visible ? hideButton.getX() - 6 : x + w - 6;
         String nick = FeedUtil.clip(this.font, profile.nick(), Math.max(10, (nameRight - tx) / 2));
         g.pose().pushPose();
         g.pose().translate(tx, y + 8, 0);
@@ -566,9 +684,8 @@ public class FeedScreen extends ShellScreen {
         if (profile.moderator()) {
             String mod = tr("feed.profile.mod");
             int cw = RetroUi.chipWidth(this.font, mod);
-            if (settingsButton == null || !settingsButton.visible) {
-                RetroUi.drawChip(g, this.font, mod, x + w - 6 - cw, y + 6, RetroUi.CYAN, false);
-            }
+            int my = settingsButton != null && settingsButton.visible || hideButton != null && hideButton.visible ? y + 23 : y + 6;
+            RetroUi.drawChip(g, this.font, mod, x + w - 6 - cw, my, RetroUi.CYAN, false);
         }
     }
 
@@ -615,11 +732,18 @@ public class FeedScreen extends ShellScreen {
 
     private List<Tab> tabs() {
         List<Tab> list = new ArrayList<>();
-        list.add(new Tab(tr("feed.screen.feed.tab.all"), RetroUi.FG, filter == null && !mineOnly, null, false));
+        list.add(new Tab(tr("feed.screen.feed.tab.all"), RetroUi.FG, filter == null && !mineOnly && topDays == 0, null, false, 0));
         for (PostType type : PostType.values()) {
-            list.add(new Tab(type.prefix, type.accent(), filter == type, type, false));
+            list.add(new Tab(type.prefix, type.accent(), filter == type, type, false, 0));
         }
-        list.add(new Tab(tr("feed.screen.feed.tab.mine"), RetroUi.ACCENT, mineOnly, null, true));
+        list.add(new Tab(tr("feed.screen.feed.tab.mine"), RetroUi.ACCENT, mineOnly, null, true, 0));
+        if (hashtag == null) {
+            list.add(new Tab(tr("feed.top.tab"), PostType.GG.accent(), topDays > 0, null, false, -1));
+            if (topDays > 0) {
+                list.add(new Tab(tr("feed.top.day"), RetroUi.GRAY, topDays == 1, null, false, 1));
+                list.add(new Tab(tr("feed.top.week"), RetroUi.GRAY, topDays == 7, null, false, 7));
+            }
+        }
         return list;
     }
 
@@ -649,6 +773,8 @@ public class FeedScreen extends ShellScreen {
             String key;
             if (profileKey != null) {
                 key = profile == null ? null : "feed.profile.empty";
+            } else if (topDays > 0) {
+                key = topDays == 1 ? "feed.top.empty_day" : "feed.top.empty_week";
             } else if (mineOnly) {
                 key = "feed.screen.feed.empty.mine";
             } else if (hashtag != null && filter == null) {
@@ -723,9 +849,17 @@ public class FeedScreen extends ShellScreen {
                 for (Tab tab : tabs()) {
                     int cw = RetroUi.chipWidth(this.font, tab.label());
                     if (mouseX >= tx && mouseX < tx + cw) {
-                        if (tab.mine()) {
+                        if (tab.top() != 0) {
+                            int want = tab.top() == -1 ? (topDays > 0 ? 0 : 1) : tab.top();
+                            if (want != topDays) {
+                                topDays = want;
+                                mineOnly = false;
+                                refresh();
+                            }
+                        } else if (tab.mine()) {
                             mineOnly = !mineOnly;
                             filter = null;
+                            topDays = 0;
                             refresh();
                         } else {
                             setFilter(tab.type());
@@ -768,7 +902,10 @@ public class FeedScreen extends ShellScreen {
         boolean wasMine = mineOnly;
         filter = type;
         mineOnly = false;
-        if (wasMine) {
+        if (type == null && topDays > 0) {
+            topDays = 0;
+            refresh();
+        } else if (wasMine) {
             refresh();
         } else {
             scroll = 0;

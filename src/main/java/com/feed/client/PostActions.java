@@ -16,7 +16,7 @@ public final class PostActions {
         int choice = option == post.pollMy ? -1 : option;
         FeedApiClient.INSTANCE.vote(post, choice).whenComplete((p, ex) -> Minecraft.getInstance().execute(() -> {
             if (ex != null) {
-                toast(Component.translatable("feed.poll.title"), Component.literal(FeedApiClient.unwrap(ex).userMessage()));
+                toast(Component.translatable("feed.poll.title"), FeedApiClient.unwrap(ex).userMessage());
                 return;
             }
             if (onDone != null) {

@@ -106,14 +106,15 @@ public final class DevPreview {
                 new ModerationApi.Report("1", null, "global", null, 3, now - 12 * 60_000L,
                         List.of("spam", "scam"), List.of("alex", "deep_miner", "kot_boss"),
                         List.of("Кидает ссылку на сторонний сайт", "Уже третий раз за день"),
+                        "Всем привет, кто хочет на ферму?",
                         "РАЗДАЮ АЛМАЗЫ БЕСПЛАТНО!!! Заходи на free-diamonds.example и вводи пароль от аккаунта",
                         false, new ModerationApi.Author("spam1", "diamond_giver", "АлмазныйКороль", null), "chat", true, false),
                 new ModerationApi.Report("2", "21", "sample", "Проект Шахта", 1, now - 2 * 3_600_000L,
                         List.of("abuse"), List.of("forge_master"), List.of(),
-                        "ты вообще играть не умеешь, удали игру",
+                        "ты вообще играть не умеешь, удали игру", null,
                         false, new ModerationApi.Author("rude", "griefer228", "Грифер", jeb), null, true, true),
                 new ModerationApi.Report("3", null, "global", null, 1, now - 26 * 3_600_000L,
                         List.of("nsfw"), List.of("alex"), List.of(),
-                        "", true, new ModerationApi.Author("art", "pixel_art", "Художник", notch), "build", true, false));
+                        "", null, true, new ModerationApi.Author("art", "pixel_art", "Художник", notch), "build", true, false));
     }
 }

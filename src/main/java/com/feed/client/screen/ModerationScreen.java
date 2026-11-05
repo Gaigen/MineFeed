@@ -128,6 +128,13 @@ public class ModerationScreen extends ShellScreen {
             lines = new ArrayList<>(lines.subList(0, MAX_TEXT_LINES));
             lines.set(MAX_TEXT_LINES - 1, FeedUtil.clip(this.font, lines.get(MAX_TEXT_LINES - 1) + "\u2026", w));
         }
+        if (r.original() != null && !r.original().equals(r.text())) {
+            List<String> orig = RetroUi.wrap(this.font, tr("feed.mod.original") + " " + RetroUi.flatten(r.original()), w);
+            for (int i = 0; i < Math.min(3, orig.size()); i++) {
+                String l = orig.get(i);
+                lines.add("\u0002" + (i == 2 && orig.size() > 3 ? FeedUtil.clip(this.font, l + "\u2026", w) : l));
+            }
+        }
         if (r.image()) {
             lines.add("\u0001" + tr("feed.mod.image"));
         }
@@ -244,7 +251,9 @@ public class ModerationScreen extends ShellScreen {
         int ty = ay + 11;
         for (String line : textLines(r, w - 34)) {
             boolean marker = line.startsWith("\u0001");
-            g.drawString(this.font, marker ? line.substring(1) : line, nx, ty, marker ? RetroUi.GRAY : RetroUi.FG, false);
+            boolean orig = line.startsWith("\u0002");
+            g.drawString(this.font, marker || orig ? line.substring(1) : line, nx, ty,
+                    orig ? RetroUi.ACCENT : marker ? RetroUi.GRAY : RetroUi.FG, false);
             ty += LINE;
         }
         ty += 4;

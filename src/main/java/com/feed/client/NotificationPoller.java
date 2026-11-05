@@ -132,6 +132,10 @@ public final class NotificationPoller {
             if (n == null || n.id() == null || n.id().isEmpty()) continue;
             if (toastedIds.contains(n.id())) continue;
             if (fetchCursor != null && !idGreater(n.id(), fetchCursor)) continue;
+            if (HiddenPlayers.isHidden(n.actorId()) && !"request".equals(n.kind())) {
+                toastedIds.add(n.id());
+                continue;
+            }
             if (!hasUnreadId(n.id())) {
                 unread.add(n);
                 while (unread.size() > UNREAD_CAP) unread.remove(0);

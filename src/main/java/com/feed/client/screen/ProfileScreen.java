@@ -45,6 +45,8 @@ public class ProfileScreen extends ShellScreen {
     private int tagY;
     private int avatarY;
     private int discordY;
+    private int hiddenY;
+    private RetroButton hiddenButton;
     private int accountY;
     private int statusY;
 
@@ -149,6 +151,10 @@ public class ProfileScreen extends ShellScreen {
                 b -> discordAction());
         y += 26;
 
+        hiddenY = y;
+        hiddenButton = button(bx, y, bw, "feed.hide.list", b -> this.minecraft.setScreen(new HiddenPlayersScreen(home()).from(this)));
+        y += 26;
+
         accountY = y;
         int ax = fx;
         RetroButton code = button(ax, y + 12, 0, "feed.account.profile.new_code", b -> confirmNewCode());
@@ -198,6 +204,7 @@ public class ProfileScreen extends ShellScreen {
                 && (!onCooldown() || isClaimValue());
         discordButton.active = !busy;
         avatarButton.active = !busy;
+        hiddenButton.active = !busy && com.feed.client.HiddenPlayers.count() > 0;
         for (RetroButton b : accountButtons) {
             b.active = !busy;
         }
@@ -444,6 +451,11 @@ public class ProfileScreen extends ShellScreen {
         hint(g, dval, discordY + 1, RetroUi.FG, textW);
         hint(g, a.tagProtected() ? tr("feed.account.discord.hint_protected") : tr("feed.account.discord.hint"),
                 discordY + 11, a.tagProtected() ? AccountUi.GREEN : RetroUi.GRAY, textW);
+
+        label(g, "feed.hide.label", hiddenY);
+        int hc = com.feed.client.HiddenPlayers.count();
+        hint(g, hc == 0 ? tr("feed.hide.none") : tr("feed.hide.count", hc), hiddenY + 1, RetroUi.FG, textW);
+        hint(g, tr("feed.hide.hint"), hiddenY + 11, RetroUi.GRAY, textW);
 
         label(g, "feed.account.key.label", accountY);
         hint(g, tr("feed.account.key.value"), accountY + 1, RetroUi.GRAY, w - LABEL_W);

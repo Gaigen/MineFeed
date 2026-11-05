@@ -27,7 +27,7 @@ public final class ModerationApi {
     /** Open reports about one post or comment, grouped. */
     public record Report(String postId, String commentId, String space, String spaceName, int count, long lastAt,
                          List<String> reasons, List<String> reporters, List<String> details,
-                         String text, boolean image, Author author, String type, boolean canBan, boolean canKick) {
+                         String text, String original, boolean image, Author author, String type, boolean canBan, boolean canKick) {
         public String key() {
             return postId + "/" + (commentId == null ? "" : commentId);
         }
@@ -72,7 +72,7 @@ public final class ModerationApi {
                 list.add(new Report(str(r, "postId"), str(r, "commentId"), str(r, "space"), str(r, "spaceName"),
                         num(r, "count"), r.has("lastAt") && !r.get("lastAt").isJsonNull() ? r.get("lastAt").getAsLong() : 0L,
                         strings(r, "reasons"), strings(r, "reporters"), strings(r, "details"),
-                        str(t, "text"), t.has("image") && t.get("image").isJsonObject(),
+                        str(t, "text"), str(t, "original"), t.has("image") && t.get("image").isJsonObject(),
                         new Author(str(a, "id"), str(a, "tag"), str(a, "nick"), str(a, "avatar")),
                         str(t, "type"), bool(r, "canBan"), bool(r, "canKick")));
             }
