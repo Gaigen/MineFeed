@@ -59,6 +59,7 @@ export function publicAccount(a, now) {
     skin: a.skin || null,
     hasDiscordAvatar: !!(a.discord_id && a.discord_avatar),
     canChangeTagAt: nextTagChange && nextTagChange > now ? nextTagChange : null,
+    showNsfw: !!a.show_nsfw,
   };
 }
 
@@ -169,6 +170,12 @@ export async function updateMe(env, account, body, now) {
   if (body.avatar !== undefined) {
     if (!A.CHOICES.includes(body.avatar)) throw new HttpError(400, "bad_avatar", "Неизвестный тип аватара");
     await env.DB.prepare("UPDATE accounts SET avatar = ? WHERE id = ?").bind(body.avatar, account.id).run();
+  }
+  if (body.showNsfw !== undefined) {
+    // turning it on = "I am 18+": the time is kept as the confirmation
+    const on = body.showNsfw === true;
+    await env.DB.prepare("UPDATE accounts SET show_nsfw = ?, nsfw_confirmed_at = CASE WHEN ? THEN ? ELSE nsfw_confirmed_at END WHERE id = ?")
+      .bind(on ? 1 : 0, on ? 1 : 0, now, account.id).run();
   }
   const acc = await env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(account.id).first();
   return { account: publicAccount(acc, now) };

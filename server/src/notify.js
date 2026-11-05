@@ -48,7 +48,8 @@ export async function mentions(env, actor, text, where, now) {
   const space = where.space || "global";
   const { results } = await env.DB.prepare(
     `SELECT a.id FROM accounts a WHERE a.banned = 0 AND a.tag IN (${tags.map(() => "?").join(",")})
-       AND (? = 'global' OR EXISTS (SELECT 1 FROM members m WHERE m.community_id = ? AND m.account_id = a.id))`
+       AND (? = 'global' OR EXISTS (SELECT 1 FROM members m WHERE m.community_id = ? AND m.account_id = a.id))
+       ${where.nsfw ? "AND a.show_nsfw = 1" : ""}`
   ).bind(...tags, space, space).all();
   for (const r of results) {
     if (r.id === actor.id || where.skip.includes(r.id)) continue;

@@ -87,7 +87,7 @@ export async function route(request, env, now) {
     const q = url.searchParams;
     if (p === "/v2/feed" && m === "GET") return json(await F.feed(env, account, q, now));
     if (p === "/v2/users" && m === "GET") return json(await U.search(env, q));
-    if (p === "/v2/hashtags" && m === "GET") return json(await H.list(env, await F.spaceFor(env, account, q.get("space")), q.get("q"), now));
+    if (p === "/v2/hashtags" && m === "GET") return json(await H.list(env, await F.spaceFor(env, account, q.get("space")), q.get("q"), now, account));
     if (p === "/v2/sync" && m === "GET") return json(await F.sync(env, account, q, now));
     if (p === "/v2/posts" && m === "POST") return json(await F.createPost(env, account, await readJson(request, 2_100_000), now), 201);
     if (p === "/v2/reports" && m === "POST") return json(await M.report(env, account, await readJson(request), now));

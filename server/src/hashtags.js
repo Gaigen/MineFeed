@@ -40,20 +40,21 @@ export async function indexPost(env, postId, space, text, createdAt) {
  * GET /v2/hashtags?space=&q= — without q: popular tags of the last two weeks in the space;
  * with q: tags starting with q (all time), most used first. [{tag, posts}]
  */
-export async function list(env, space, q, now) {
+export async function list(env, space, q, now, account = null) {
+  const nf = account && account.show_nsfw ? "" : " AND p.nsfw = 0";
   const raw = String(q ?? "").trim().replace(/^#/, "");
   if (raw) {
     const prefix = raw.toLowerCase().replace(/ё/g, "е");
     if (!/^[\p{L}\p{N}_]{1,32}$/u.test(prefix)) return { tags: [] };
     const like = prefix.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
     const { results } = await env.DB.prepare(
-      `SELECT t.tag, COUNT(*) AS posts FROM post_tags t JOIN posts p ON p.id = t.post_id AND p.deleted = 0
+      `SELECT t.tag, COUNT(*) AS posts FROM post_tags t JOIN posts p ON p.id = t.post_id AND p.deleted = 0${nf}
        WHERE t.space = ? AND t.tag LIKE ? ESCAPE '\\' GROUP BY t.tag ORDER BY posts DESC, t.tag LIMIT 8`
     ).bind(space.id, like).all();
     return { tags: results };
   }
   const { results } = await env.DB.prepare(
-    `SELECT t.tag, COUNT(*) AS posts FROM post_tags t JOIN posts p ON p.id = t.post_id AND p.deleted = 0
+    `SELECT t.tag, COUNT(*) AS posts FROM post_tags t JOIN posts p ON p.id = t.post_id AND p.deleted = 0${nf}
      WHERE t.space = ? AND t.created_at > ? GROUP BY t.tag ORDER BY posts DESC, MAX(t.created_at) DESC LIMIT 10`
   ).bind(space.id, now - TRENDING_DAYS * DAY).all();
   return { tags: results };

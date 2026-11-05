@@ -70,23 +70,26 @@ async function onMessage(env, d, ctx, now) {
 
   if (d.id === d.channel_id) {
     // someone opened a new forum post right in Discord
-    const space = await env.DB.prepare("SELECT id, tags FROM spaces WHERE forum_id = ?").bind(String(d.parent_id || "")).first();
-    if (!space) return "skip";
+    const found = await env.DB.prepare("SELECT id, tags FROM spaces WHERE forum_id = ?").bind(String(d.parent_id || "")).first();
+    if (!found) return "skip";
+    // the 18+ forum feeds the global feed as 18+ posts
+    const nsfw = found.id === "global18" ? 1 : 0;
+    const space = nsfw ? { ...found, id: "global" } : found;
     const tagIds = JSON.parse(space.tags || "{}");
     const applied = new Set(d.applied_tags || []);
     const type = TYPES.find((t) => applied.has(tagIds[t])) || "talk";
     const body = [d.thread_name, text].filter(Boolean).join("\n");
     const postText = [...body].slice(0, MAX_POST).join("") || "…";
     const r = await env.DB.prepare(
-      `INSERT OR IGNORE INTO posts (id, space, author_id, ext_name, ext_avatar, type, text, image, created_at, updated_at, solved)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR IGNORE INTO posts (id, space, author_id, ext_name, ext_avatar, type, text, image, created_at, updated_at, solved, nsfw)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(d.id, space.id, acc ? acc.id : null, acc ? null : displayName(d), extAvatar, type, postText,
-      image, created, now, applied.has(tagIds.solved) ? 1 : 0).run();
+      image, created, now, applied.has(tagIds.solved) ? 1 : 0, nsfw).run();
     if (r.meta.changes) await indexPost(env, d.id, space.id, postText, created);
     return r.meta.changes ? "post" : "dup";
   }
 
-  const post = await env.DB.prepare("SELECT id, space, author_id, deleted FROM posts WHERE id = ?").bind(d.channel_id).first();
+  const post = await env.DB.prepare("SELECT id, space, author_id, deleted, nsfw FROM posts WHERE id = ?").bind(d.channel_id).first();
   if (!post || post.deleted) return "skip";
   const r = await env.DB.prepare(
     `INSERT OR IGNORE INTO comments (id, post_id, author_id, ext_name, ext_avatar, text, image, created_at, updated_at)
@@ -99,7 +102,7 @@ async function onMessage(env, d, ctx, now) {
     await N.add(env, { to: post.author_id, kind: "comment", postId: post.id, commentId: d.id, actor, text: text || "🖼" }, now);
     skip.push(post.author_id);
   }
-  if (text) await N.mentions(env, actor, text, { postId: post.id, commentId: d.id, space: post.space, skip }, now);
+  if (text) await N.mentions(env, actor, text, { postId: post.id, commentId: d.id, space: post.space, skip, nsfw: !!post.nsfw }, now);
   return "comment";
 }
 
@@ -126,7 +129,9 @@ async function onDelete(env, id, channelId, now) {
 }
 
 async function onThreadUpdate(env, d, now) {
-  const post = await env.DB.prepare("SELECT p.id, p.solved, s.tags FROM posts p JOIN spaces s ON s.id = p.space WHERE p.id = ?").bind(d.id).first();
+  const post = await env.DB.prepare(
+    "SELECT p.id, p.solved, s.tags FROM posts p JOIN spaces s ON s.id = (CASE WHEN p.nsfw = 1 AND p.space = 'global' THEN 'global18' ELSE p.space END) WHERE p.id = ?"
+  ).bind(d.id).first();
   if (!post) return "skip";
   const solvedTag = JSON.parse(post.tags || "{}").solved;
   if (!solvedTag || !Array.isArray(d.applied_tags)) return "skip";

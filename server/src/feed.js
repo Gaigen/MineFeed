@@ -51,6 +51,19 @@ export function threadName(text) {
 
 // ---------- spaces ----------
 
+/** Pseudo space: the Discord forum that holds 18+ posts of the global feed (in D1 they stay space = 'global'). */
+export const NSFW_SPACE = "global18";
+
+/** Where the post lives in Discord: its space, or the 18+ forum for 18+ posts of the global feed. */
+export async function hookSpace(env, post) {
+  return getSpace(env, post.nsfw && post.space === "global" ? NSFW_SPACE : post.space);
+}
+
+/** SQL filter for players who did not turn on 18+ posts. */
+export function nsfwFilter(account, alias = "p") {
+  return account && account.show_nsfw ? null : `${alias}.nsfw = 0`;
+}
+
 const spaceCaches = new WeakMap(); // per D1 binding (one in production; many in tests)
 
 function cacheFor(env) {
@@ -68,6 +81,13 @@ export async function getSpace(env, id) {
     if (!env.FEED_FORUM_ID) throw new HttpError(503, "feed_off", "Лента сейчас недоступна");
     await env.DB.prepare("INSERT OR IGNORE INTO spaces (id, forum_id, tags) VALUES ('global', ?, ?)")
       .bind(env.FEED_FORUM_ID, env.FEED_TAGS || "{}").run();
+    row = await env.DB.prepare("SELECT * FROM spaces WHERE id = ?").bind(id).first();
+  }
+  if (!row && id === NSFW_SPACE) {
+    // Discord side of 18+ posts of the global feed: a separate age-restricted forum
+    if (!env.FEED18_FORUM_ID) throw new HttpError(400, "nsfw_off", "18+ посты в общей ленте сейчас отключены");
+    await env.DB.prepare("INSERT OR IGNORE INTO spaces (id, forum_id, tags) VALUES (?, ?, ?)")
+      .bind(NSFW_SPACE, env.FEED18_FORUM_ID, env.FEED18_TAGS || "{}").run();
     row = await env.DB.prepare("SELECT * FROM spaces WHERE id = ?").bind(id).first();
   }
   if (!row) throw new HttpError(404, "no_space", "Сообщество не найдено");
@@ -135,6 +155,7 @@ export function postOut(r, my) {
     pinned: !!r.pinned,
     editedAt: r.edited_at || null,
     image: r.image ? JSON.parse(r.image) : null,
+    ...(r.nsfw ? { nsfw: true } : {}),
   };
 }
 
@@ -309,6 +330,8 @@ export async function feed(env, account, q, now) {
   const type = q.get("type");
   const where = ["p.space = ?", "p.deleted = 0"];
   const binds = [space.id];
+  const nf = nsfwFilter(account);
+  if (nf) where.push(nf);
   if (TYPES.includes(type)) { where.push("p.type = ?"); binds.push(type); }
   if (type === "mine") { where.push("p.author_id = ?"); binds.push(account.id); }
   const hashtag = H.feedTag(q.get("tag"));
@@ -334,7 +357,7 @@ export async function feed(env, account, q, now) {
   let pinned;
   if (!before && !hashtag && !authorId && !type) {
     const pr = await env.DB.prepare(
-      `${POST_SELECT} WHERE p.space = ? AND p.pinned > 0 AND p.deleted = 0 ORDER BY p.pinned DESC LIMIT ${MAX_PINS}`
+      `${POST_SELECT} WHERE p.space = ? AND p.pinned > 0 AND p.deleted = 0${nf ? ` AND ${nf}` : ""} ORDER BY p.pinned DESC LIMIT ${MAX_PINS}`
     ).bind(space.id).all();
     pinned = await postsOut(env, account, pr.results);
   }
@@ -388,7 +411,7 @@ export async function sync(env, account, q, now) {
   if (!since || now - since > SYNC_MAX_AGE) return { now, reset: true, posts: [], comments: [], notifications, communities, interval };
   const from = since - SYNC_OVERLAP;
   const { results } = await env.DB.prepare(
-    `${POST_SELECT} WHERE p.space = ? AND p.updated_at > ? ORDER BY p.updated_at LIMIT 101`
+    `${POST_SELECT} WHERE p.space = ? AND p.updated_at > ?${nsfwFilter(account) ? ` AND ${nsfwFilter(account)}` : ""} ORDER BY p.updated_at LIMIT 101`
   ).bind(space.id, from).all();
   if (results.length > 100) return { now, reset: true, posts: [], comments: [], notifications, communities, interval };
   const out = { now, reset: false, posts: await postsOut(env, account, results), comments: [], notifications, communities, interval };
@@ -420,25 +443,36 @@ export async function createPost(env, account, body, now) {
   const space = await spaceFor(env, account, body.space);
   if (!TYPES.includes(body.type)) throw new HttpError(400, "bad_type", "Неизвестный тип поста");
   const file = body.image ? parseUpload(body.image) : null;
+  const spoiler = !!(file && body.image.spoiler);
+  if (spoiler) file.name = `SPOILER_${file.name}`; // Discord blurs it until clicked
   const poll = parsePoll(body.poll);
   const text = file && !poll && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
+  const nsfw = !!body.nsfw && space.id === "global";
+  if (body.nsfw) {
+    if (!account.show_nsfw) throw new HttpError(403, "need_18", "Сначала включи «Показывать 18+» в настройках профиля");
+    if (space.id !== "global" && !(await communityNsfw(env, space.id))) {
+      throw new HttpError(400, "community_not_18", "Это сообщество не отмечено как 18+");
+    }
+  }
+  const target = nsfw ? await getSpace(env, NSFW_SPACE) : space;
   await rateLimit(env, "post", account.id, now);
   if (file) await rateLimit(env, "image", account.id, now);
-  const tag = space.tagIds[body.type];
-  const msg = await postAs(env, space, account, {
+  const tags = [target.tagIds[body.type], nsfw ? target.tagIds.nsfw : null].filter(Boolean);
+  const msg = await postAs(env, target, account, {
     content: discordContent(text, poll),
     thread_name: text ? threadName(text) : `📷 ${account.nick}`,
-    ...(tag ? { applied_tags: [tag] } : {}),
+    ...(tags.length ? { applied_tags: tags } : {}),
   }, null, file ? [file] : null);
   const id = msg.channel_id;
   const att = (msg.attachments || [])[0];
-  const image = file && att ? JSON.stringify([{ url: att.url, w: att.width || file.w, h: att.height || file.h }]) : null;
+  const image = file && att
+    ? JSON.stringify([{ url: att.url, w: att.width || file.w, h: att.height || file.h, ...(spoiler ? { spoiler: true } : {}) }]) : null;
   await env.DB.prepare(
-    "INSERT INTO posts (id, space, author_id, type, text, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, space.id, account.id, body.type, text, image, now, now).run();
+    "INSERT INTO posts (id, space, author_id, type, text, image, created_at, updated_at, nsfw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, space.id, account.id, body.type, text, image, now, now, nsfw ? 1 : 0).run();
   if (poll) await env.DB.prepare("INSERT INTO polls (post_id, options) VALUES (?, ?)").bind(id, JSON.stringify(poll)).run();
   await H.indexPost(env, id, space.id, text, now);
-  await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
+  await N.mentions(env, account, text, { postId: id, space: space.id, skip: [], nsfw }, now);
   const [out] = await postsOut(env, account, [await loadPost(env, id)]);
   return { post: out };
 }
@@ -448,6 +482,11 @@ export async function createPost(env, account, body, now) {
  * System text, so the usual length limits don't apply (Discord max is 2000).
  * Returns the ids to edit them later: { thread, comment }.
  */
+async function communityNsfw(env, id) {
+  const c = await env.DB.prepare("SELECT nsfw FROM communities WHERE id = ?").bind(id).first();
+  return !!(c && c.nsfw);
+}
+
 export async function publishWelcome(env, spaceId, owner, { title, text, comment }, now) {
   // Discord only: the mod doesn't show it. Not indexed in D1, so the bot ignores replies there too.
   const space = await getSpace(env, spaceId);
@@ -497,9 +536,10 @@ export async function createComment(env, account, id, body, now) {
   const space = await spaceFor(env, account, post.space);
   const text = cleanText(body.text, MAX_COMMENT);
   await rateLimit(env, "comment", account.id, now);
+  const target = post.nsfw ? await hookSpace(env, post) : space;
   let msg;
   try {
-    msg = await postAs(env, space, account, { content: text }, post.id);
+    msg = await postAs(env, target, account, { content: text }, post.id);
   } catch (e) {
     if (e.discordStatus === 404) { // thread was removed in Discord
       await markPostDeleted(env, post.id, now);
@@ -517,7 +557,7 @@ export async function createComment(env, account, id, body, now) {
     await N.add(env, { to: post.author_id, kind: "comment", postId: post.id, commentId: msg.id, actor: account, text }, now);
     notified.push(post.author_id);
   }
-  await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, space: post.space, skip: notified }, now);
+  await N.mentions(env, account, text, { postId: post.id, commentId: msg.id, space: post.space, skip: notified, nsfw: !!post.nsfw }, now);
   const row = await env.DB.prepare(`${COMMENT_SELECT} WHERE c.id = ?`).bind(msg.id).first();
   return { comment: commentOut(row) };
 }
@@ -530,7 +570,8 @@ export async function editPost(env, account, id, body, now) {
   const text = post.image && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
   if (text === post.text) return { post: postOut(await loadPost(env, id), -1) };
   await rateLimit(env, "edit", account.id, now);
-  const hook = `/webhooks/${space.webhook_id}/${space.webhook_token}/messages/${post.id}?thread_id=${post.id}`;
+  const target = post.nsfw ? await hookSpace(env, post) : space;
+  const hook = `/webhooks/${target.webhook_id}/${target.webhook_token}/messages/${post.id}?thread_id=${post.id}`;
   try {
     await dapi(env, "PATCH", hook, { auth: false, body: { content: discordContent(text, await pollOptions(env, post.id)), allowed_mentions: { parse: [] } } });
   } catch (e) {
@@ -560,7 +601,8 @@ export async function editComment(env, account, id, body, now) {
   const text = c.image && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_COMMENT);
   if (text !== c.text) {
     await rateLimit(env, "edit", account.id, now);
-    const hook = `/webhooks/${space.webhook_id}/${space.webhook_token}/messages/${c.id}?thread_id=${post.id}`;
+    const target = post.nsfw ? await hookSpace(env, post) : space;
+    const hook = `/webhooks/${target.webhook_id}/${target.webhook_token}/messages/${c.id}?thread_id=${post.id}`;
     try {
       await dapi(env, "PATCH", hook, { auth: false, body: { content: text, allowed_mentions: { parse: [] } } });
     } catch (e) {
@@ -663,8 +705,8 @@ export async function solve(env, account, id, body, now) {
   const access = await spaceForModeration(env, account, post.space);
   if (!canModerate(account, post.author_id, access)) throw new HttpError(403, "forbidden", "Только автор может отметить вопрос решённым");
   const solved = body.solved === undefined ? !post.solved : !!body.solved;
-  const space = await getSpace(env, post.space);
-  const tags = [space.tagIds.help, solved ? space.tagIds.solved : null].filter(Boolean);
+  const space = await hookSpace(env, post);
+  const tags = [space.tagIds.help, solved ? space.tagIds.solved : null, post.nsfw ? space.tagIds.nsfw : null].filter(Boolean);
   // solved questions are locked in Discord too (no new replies there; the mod already blocks them)
   const patch = { locked: solved };
   if (tags.length) patch.applied_tags = tags;

@@ -69,7 +69,7 @@ function out(env, c, role, extra = {}) {
   const guild = env.DISCORD_GUILD_ID;
   return {
     id: c.id, name: c.name, description: c.description, about: c.about || "", links: c.links || "", members: c.members,
-    ownerId: c.owner_id, createdAt: c.created_at, role,
+    ownerId: c.owner_id, createdAt: c.created_at, role, nsfw: !!c.nsfw,
     discordUrl: guild && c.forum_id ? `https://discord.com/channels/${guild}/${c.forum_id}` : null, ...extra,
   };
 }
@@ -240,6 +240,15 @@ export async function update(env, account, id, body) {
   const description = body.description === undefined ? c.description : validDescription(body.description);
   const about = body.about === undefined ? c.about : optional(body.about, 1000);
   const links = body.links === undefined ? c.links : optional(body.links, 300);
+  const nsfw = body.nsfw === undefined ? !!c.nsfw : body.nsfw === true;
+  if (!nsfw && c.nsfw && !account.moderator) {
+    // the forum may already hold 18+ posts: only a server moderator who checked it may take the mark off
+    throw new HttpError(403, "nsfw_locked", "Снять метку 18+ может только модератор сервера");
+  }
+  if (nsfw !== !!c.nsfw) {
+    // Discord: age-restricted channel (it asks for the age itself before showing it)
+    await dapi(env, "PATCH", `/channels/${c.forum_id}`, { body: { nsfw }, allow404: true });
+  }
   if (name !== c.name) {
     await dapi(env, "PATCH", `/guilds/${env.DISCORD_GUILD_ID}/roles/${c.mod_role_id}`, { body: { name: `${name} · mod` }, allow404: true });
     await dapi(env, "PATCH", `/guilds/${env.DISCORD_GUILD_ID}/roles/${c.member_role_id}`, { body: { name: `${name} · member` }, allow404: true });
@@ -249,7 +258,7 @@ export async function update(env, account, id, body) {
       body: { name: channelName(name), topic: description || `MineFeed community «${name}»` }, allow404: true,
     });
   }
-  const next = { ...c, name, description, about, links };
+  const next = { ...c, name, description, about, links, nsfw: nsfw ? 1 : 0 };
   let commentId = c.welcome_comment_id;
   if (c.welcome_thread_id && (name !== c.name || description !== c.description || about !== c.about || links !== c.links)) {
     try {
@@ -258,8 +267,8 @@ export async function update(env, account, id, body) {
       console.error("welcome edit failed", e.message); // the settings are saved anyway
     }
   }
-  await env.DB.prepare("UPDATE communities SET name = ?, description = ?, about = ?, links = ?, welcome_comment_id = ? WHERE id = ?")
-    .bind(name, description, about, links, commentId, c.id).run();
+  await env.DB.prepare("UPDATE communities SET name = ?, description = ?, about = ?, links = ?, welcome_comment_id = ?, nsfw = ? WHERE id = ?")
+    .bind(name, description, about, links, commentId, nsfw ? 1 : 0, c.id).run();
   return { community: out(env, next, c.my_role) };
 }
 
@@ -390,7 +399,7 @@ export async function join(request, env, account, body, now) {
   if (!r || !c) throw new HttpError(404, "bad_code", "Код не найден");
   if (r.expires_at !== null && r.expires_at <= now) throw new HttpError(410, "code_expired", "Срок действия кода истёк");
   if (r.max_uses !== null && r.uses >= r.max_uses) throw new HttpError(410, "code_used_up", "Код больше не действует");
-  const pub = { id: c.id, name: c.name, description: c.description, members: c.members };
+  const pub = { id: c.id, name: c.name, description: c.description, members: c.members, nsfw: !!c.nsfw };
   const m = await env.DB.prepare("SELECT role FROM members WHERE community_id = ? AND account_id = ?").bind(c.id, account.id).first();
   if (m) return { status: "member", community: pub };
   const banned = await env.DB.prepare("SELECT 1 AS x FROM community_bans WHERE community_id = ? AND account_id = ?").bind(c.id, account.id).first();
@@ -398,6 +407,9 @@ export async function join(request, env, account, body, now) {
   const pending = await env.DB.prepare("SELECT 1 AS x FROM join_requests WHERE community_id = ? AND account_id = ?").bind(c.id, account.id).first();
   if (pending) return { status: "pending", community: pub };
   if (c.members >= maxMembers(env)) throw new HttpError(409, "full", "В сообществе нет мест");
+  if (c.nsfw && !account.show_nsfw) {
+    throw new HttpError(403, "need_18", "Это сообщество 18+. Включи «Показывать 18+» в настройках профиля");
+  }
 
   const used = await env.DB.prepare("UPDATE invite_codes SET uses = uses + 1 WHERE code = ? AND (max_uses IS NULL OR uses < max_uses)").bind(r.code).run();
   if (!used.meta.changes) throw new HttpError(410, "code_used_up", "Код больше не действует");

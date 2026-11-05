@@ -56,7 +56,8 @@ export function fromAttachments(atts) {
   const list = (atts || [])
     .filter((a) => /^image\/(png|jpeg|gif)/.test(a.content_type || "") && a.width && a.height)
     .slice(0, 4)
-    .map((a) => ({ url: a.url, w: a.width, h: a.height }));
+    .map((a) => ({ url: a.url, w: a.width, h: a.height,
+      ...(String(a.filename || "").startsWith("SPOILER_") || (a.flags & 8) ? { spoiler: true } : {}) }));
   return list.length ? JSON.stringify(list) : null;
 }
 
