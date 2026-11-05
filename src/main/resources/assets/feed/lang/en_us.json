@@ -558,5 +558,6 @@
   "feed.top.empty_day": "Nothing discussed in the last day yet",
   "feed.top.empty_week": "Nothing discussed this week yet",
   "feed.top.tab": "Top",
-  "feed.top.week": "7d"
+  "feed.top.week": "7d",
+  "feed.compose.save_hint": "Ctrl+Enter to save"
 }

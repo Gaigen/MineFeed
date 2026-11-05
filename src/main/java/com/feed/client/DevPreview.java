@@ -21,7 +21,8 @@ import java.util.List;
  * Development only: with -Dminefeed.preview the feed opens straight from the title screen,
  * so the UI can be checked without loading a world (every time the title screen shows up).
  * F8 / F7 on a feed page open a sample community as its owner / as a member (fixed data),
- * F9 the moderation queue with sample reports, F6 the report dialog (nothing is sent).
+ * F9 the moderation queue with sample reports, F6 the report dialog (nothing is sent),
+ * F10 shows the last loaded post as pinned (local only).
  */
 @EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class DevPreview {
@@ -61,6 +62,11 @@ public final class DevPreview {
             return;
         }
         if (!(event.getScreen() instanceof FeedScreen feed)) {
+            return;
+        }
+        if (k == GLFW.GLFW_KEY_F10) {
+            feed.previewPin();
+            event.setCanceled(true);
             return;
         }
         if (k == GLFW.GLFW_KEY_F8 || k == GLFW.GLFW_KEY_F7) {

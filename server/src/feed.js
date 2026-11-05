@@ -212,7 +212,7 @@ function parsePoll(raw) {
 function discordContent(text, options) {
   if (!options) return text;
   const lines = options.map((o, i) => `${["1️⃣", "2️⃣", "3️⃣", "4️⃣"][i]} ${o}`);
-  return `${text}\n\n📊 ${lines.join("\n")}\n-# голосование — в моде MineFeed`;
+  return `${text}\n\n📊 **Опрос**\n${lines.join("\n")}\n-# голосовать — в моде MineFeed`;
 }
 
 async function pollOptions(env, postId) {

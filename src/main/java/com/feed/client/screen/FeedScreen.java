@@ -313,7 +313,7 @@ public class FeedScreen extends ShellScreen {
         }
         this.minecraft.setScreen(new RetroConfirmScreen(this, Component.translatable("feed.hide.title"),
                 Component.translatable("feed.hide.confirm", p.nick()), Component.translatable("feed.hide.hide"), false, () -> {
-            com.feed.client.HiddenPlayers.hide(p.id(), p.nick());
+            com.feed.client.HiddenPlayers.hide(p.id(), p.nick(), p.avatar());
             this.minecraft.setScreen(this);
             updateManageButton();
         }));
@@ -553,6 +553,18 @@ public class FeedScreen extends ShellScreen {
             }
         }
         relayout();
+    }
+
+    /** Dev preview only: show the last loaded post as pinned (local, nothing is sent). */
+    public void previewPin() {
+        if (!posts.isEmpty()) {
+            Post p = posts.get(posts.size() - 1);
+            p.pinned = true;
+            pinned.clear();
+            pinned.add(p);
+            scroll = 0;
+            relayout();
+        }
     }
 
     private boolean showPinned() {

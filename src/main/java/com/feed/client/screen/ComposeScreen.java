@@ -58,6 +58,8 @@ public class ComposeScreen extends Screen {
     /** Poll options being typed; null = no poll. Kept across re-init. */
     private List<String> poll;
     private final List<EditBox> pollFields = new ArrayList<>();
+    /** Focus to move to after the click that rebuilt the widgets (the click itself focuses the old button). */
+    private net.minecraft.client.gui.components.events.GuiEventListener pendingFocus;
     /** Popular #tags of the space for one-click insert; null while loading. */
     private List<FeedApiClient.HashtagCount> popularTags;
     private boolean tagsRequested;
@@ -222,16 +224,14 @@ public class ComposeScreen extends Screen {
     private void togglePoll() {
         poll = poll == null ? new ArrayList<>(List.of("", "")) : null;
         rebuild();
-        if (!pollFields.isEmpty()) {
-            setFocused(pollFields.get(0));
-        }
+        pendingFocus = pollFields.isEmpty() ? input : pollFields.get(0);
     }
 
     private void addOption() {
         if (poll != null && poll.size() < POLL_MAX) {
             poll.add("");
             rebuild();
-            setFocused(pollFields.get(pollFields.size() - 1));
+            pendingFocus = pollFields.get(pollFields.size() - 1);
         }
     }
 
@@ -239,6 +239,7 @@ public class ComposeScreen extends Screen {
         if (poll != null && poll.size() > 2) {
             poll.remove(i);
             rebuild();
+            pendingFocus = pollFields.get(Math.min(i, pollFields.size() - 1));
         }
     }
 
@@ -259,7 +260,7 @@ public class ComposeScreen extends Screen {
             return;
         }
         tf.insertText(before + c + after);
-        setFocused(input);
+        pendingFocus = input;
     }
 
     private void pickScreenshot() {
@@ -413,6 +414,13 @@ public class ComposeScreen extends Screen {
             return true;
         }
         if (super.mouseClicked(mouseX, mouseY, button)) {
+            if (pendingFocus != null) {
+                if (getFocused() != null) {
+                    getFocused().setFocused(false);
+                }
+                setFocused(pendingFocus);
+                pendingFocus = null;
+            }
             return true;
         }
         if (button == 0 && !editMode()) {
@@ -464,7 +472,7 @@ public class ComposeScreen extends Screen {
         int y = panelTop();
         int w = panelWidth();
 
-        Component hint = Component.translatable("feed.screen.compose.hint");
+        Component hint = Component.translatable(editMode() ? "feed.compose.save_hint" : "feed.screen.compose.hint");
         String title = Component.translatable(editMode() ? "feed.compose.edit_title" : "feed.compose.title").getString();
         g.drawString(this.font, title, x + 10, y + 9, RetroUi.FG, false);
         g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, " \u00b7 " + where,

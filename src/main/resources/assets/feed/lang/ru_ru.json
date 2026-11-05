@@ -558,5 +558,6 @@
   "feed.top.empty_day": "За сутки пока ничего не обсуждали",
   "feed.top.empty_week": "За неделю пока ничего не обсуждали",
   "feed.top.tab": "Топ",
-  "feed.top.week": "7 дн"
+  "feed.top.week": "7 дн",
+  "feed.compose.save_hint": "Ctrl+Enter — сохранить"
 }

@@ -47,7 +47,7 @@ public class HiddenPlayersScreen extends ModalScreen {
             String id = e.getKey();
             String show = tr("feed.hide.unhide");
             int bw = buttonWidth(show);
-            RetroUi.drawAvatar(g, this.font, com.feed.client.FeedApiClient.avatarKey(id, null), e.getValue(), x, y + 1, 12);
+            RetroUi.drawAvatar(g, this.font, com.feed.client.FeedApiClient.avatarKey(id, HiddenPlayers.avatar(id)), e.getValue(), x, y + 1, 12);
             boolean nameHover = mouseX >= x && mouseX < x + w - bw - 6 && mouseY >= y && mouseY < y + ROW - 2;
             g.drawString(this.font, FeedUtil.clip(this.font, e.getValue(), w - bw - 24), x + 16, y + 3,
                     nameHover ? RetroUi.ACCENT : RetroUi.FG, false);

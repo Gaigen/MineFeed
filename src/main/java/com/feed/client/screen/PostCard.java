@@ -113,6 +113,10 @@ public final class PostCard {
         if (post.pinned) {
             PixelIcon.draw(g, "pin", mx, y + PAD + 9, RetroUi.ACCENT);
             mx += 10;
+            String pin = net.minecraft.network.chat.Component.translatable("feed.post.pinned").getString();
+            g.drawString(font, pin, mx, y + PAD + 9, RetroUi.ACCENT, false);
+            mx += font.width(pin);
+            meta = " \u00b7 " + meta;
         }
         g.drawString(font, FeedUtil.clip(font, meta, Math.max(20, chipX - mx - 4)), mx, y + PAD + 9, RetroUi.GRAY, false);
         RetroUi.drawChip(g, font, post.displayPrefix(), chipX, y + PAD, post.prefixColor(), false, cardBg);

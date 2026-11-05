@@ -390,7 +390,7 @@ test("polls, pins and top", async () => {
   const p = (await api("POST", "/v2/posts", { key: a.key, body: { type: "help", text: "Лучший биом?", poll: { options: ["Лес", " Пустыня ", "Горы"] } } })).data.post;
   assert.deepEqual(p.poll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 0, 0], my: -1 });
   const hook = calls.find((c) => c.path === "/api/v10/webhooks/wh1/tok");
-  assert.match(hook.body.content, /Лучший биом\?\n\n📊 1️⃣ Лес\n2️⃣ Пустыня\n3️⃣ Горы/);
+  assert.match(hook.body.content, /Лучший биом\?\n\n📊 \*\*Опрос\*\*\n1️⃣ Лес\n2️⃣ Пустыня\n3️⃣ Горы/);
   let v = await api("POST", `/v2/posts/${p.id}/vote`, { key: b.key, body: { option: 1 }, now: T0 + 10 });
   assert.deepEqual(v.data.poll, { options: ["Лес", "Пустыня", "Горы"], votes: [0, 1, 0], my: 1 });
   await api("POST", `/v2/posts/${p.id}/vote`, { key: a.key, body: { option: 1 }, now: T0 + 11 });
@@ -404,7 +404,7 @@ test("polls, pins and top", async () => {
   // editing keeps the poll in the Discord copy
   calls.length = 0;
   await api("PATCH", `/v2/posts/${p.id}`, { key: a.key, body: { text: "Лучший биом для дома?" }, now: T0 + 20 });
-  assert.match(calls.find((c) => c.method === "PATCH" && c.path.includes("/messages/")).body.content, /^Лучший биом для дома\?\n\n📊 1️⃣ Лес/);
+  assert.match(calls.find((c) => c.method === "PATCH" && c.path.includes("/messages/")).body.content, /^Лучший биом для дома\?\n\n📊 \*\*Опрос\*\*\n1️⃣ Лес/);
 
   // pins: server moderators in the global feed, at most 3
   const plain = (await api("POST", "/v2/posts", { key: a.key, body: { type: "talk", text: "plain" }, now: T0 + 30 })).data.post;
