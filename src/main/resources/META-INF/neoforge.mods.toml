@@ -12,6 +12,9 @@ authors="${mod_authors}"
 # Client-only: keeps the mod from loading on a dedicated server.
 side="client"
 
+[[mixins]]
+config="feed.mixins.json"
+
 [[dependencies.${mod_id}]]
 modId="neoforge"
 type="required"

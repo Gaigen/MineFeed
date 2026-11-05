@@ -126,7 +126,7 @@ public class CommunityScreen extends ShellScreen {
             y += ROW;
             descBox = addRenderableWidget(AccountUi.field(this.font, fx, y, fw, 200, Component.translatable("feed.manage.settings.description")));
             y += ROW;
-            aboutBox = new MultiLineEditBox(this.font, fx, y, fw, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
+            aboutBox = new RetroTextArea(this.font, fx, y, fw, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
             aboutBox.setCharacterLimit(1000);
             addRenderableWidget(aboutBox);
             y += ABOUT_H + 12;

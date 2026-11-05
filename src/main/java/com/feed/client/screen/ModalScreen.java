@@ -17,7 +17,6 @@ public abstract class ModalScreen extends RetroScreen {
 
     protected static final int PAD = 10;
     protected static final int BTN_H = 16;
-    protected static final int DIM = 0xC8000000;
 
     protected final FeedScreen parent;
     /** Screen drawn behind the dialog and returned to on close (the page it was opened from). */
@@ -104,9 +103,9 @@ public abstract class ModalScreen extends RetroScreen {
             com.mojang.blaze3d.systems.RenderSystem.clear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT,
                     net.minecraft.client.Minecraft.ON_OSX);
         } else {
-            g.fill(0, 0, this.width, this.height, RetroUi.BG);
+            g.fill(0, 0, this.width, this.height, RetroUi.PAGE);
         }
-        g.fill(0, 0, this.width, this.height, DIM);
+        g.fill(0, 0, this.width, this.height, RetroUi.DIM);
         g.fill(px + RetroUi.SHADOW_OFFSET, py + RetroUi.SHADOW_OFFSET, px + pw + RetroUi.SHADOW_OFFSET,
                 py + ph + RetroUi.SHADOW_OFFSET, RetroUi.SHADOW);
         g.fill(px, py, px + pw, py + ph, RetroUi.BG);

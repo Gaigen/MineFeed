@@ -79,7 +79,7 @@ public class ThemeScreen extends ShellScreen {
     /** A mini feed in the theme's own palette, independent of the current one. */
     private void drawPreview(GuiGraphics g, Theme t, int x, int y, int w, boolean selected, boolean hover) {
         g.fill(x + 3, y + 3, x + w + 3, y + CARD_H + 3, t.shadow);
-        g.fill(x, y, x + w, y + CARD_H, t.bg);
+        g.fill(x, y, x + w, y + CARD_H, t.page);
         int pw = w - 14;
         g.fill(x + 8, y + 8, x + 8 + pw, y + 34, t.shadow);
         g.fill(x + 6, y + 6, x + 6 + pw, y + 32, t.bg);

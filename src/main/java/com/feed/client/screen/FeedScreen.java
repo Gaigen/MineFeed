@@ -599,7 +599,7 @@ public class FeedScreen extends ShellScreen {
             }
         }
         if (!rows.isEmpty() && nextCursor == null && !loading) {
-            g.drawCenteredString(this.font, tr("feed.screen.feed.end"), mid, endY + 2, RetroUi.GRAY);
+            RetroUi.centered(g, this.font, tr("feed.screen.feed.end"), mid, endY + 2, RetroUi.GRAY);
         }
 
         if (rows.isEmpty() && !loading && error == null) {
@@ -616,15 +616,15 @@ public class FeedScreen extends ShellScreen {
                 key = "feed.screen.feed.empty";
             }
             if (key != null) {
-                g.drawCenteredString(this.font, Component.translatable(key), mid, top + 12, RetroUi.GRAY);
+                RetroUi.centered(g, this.font, Component.translatable(key), mid, top + 12, RetroUi.GRAY);
             }
         }
         if (loading) {
             String load = tr("feed.screen.loading") + (RetroUi.blinkFast() ? "_" : " ");
-            g.drawCenteredString(this.font, load, mid, bottom - 12, RetroUi.GRAY);
+            RetroUi.centered(g, this.font, load, mid, bottom - 12, RetroUi.GRAY);
         }
         if (error != null) {
-            g.drawCenteredString(this.font, error, mid, bottom - 12, RetroUi.ERROR);
+            RetroUi.centered(g, this.font, error, mid, bottom - 12, RetroUi.ERROR);
         }
         g.disableScissor();
 

@@ -173,7 +173,7 @@ public abstract class ShellScreen extends RetroScreen {
 
     @Override
     public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        g.fill(0, 0, this.width, this.height, RetroUi.BG);
+        g.fill(0, 0, this.width, this.height, RetroUi.PAGE);
         g.fill(sidebarW() - 1, 0, sidebarW(), this.height, RetroUi.SHADOW);
     }
 

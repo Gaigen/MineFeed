@@ -56,7 +56,7 @@ public class ComposeScreen extends Screen {
         int inputY = y + 24 + RetroUi.CHIP_H + 6;
         int inputW = w - 20;
 
-        input = new MultiLineEditBox(this.font, inputX, inputY, inputW, INPUT_H,
+        input = new RetroTextArea(this.font, inputX, inputY, inputW, INPUT_H,
                 Component.translatable("feed.screen.compose.placeholder"), Component.empty());
         input.setCharacterLimit(MAX);
         addRenderableWidget(input);
@@ -195,7 +195,7 @@ public class ComposeScreen extends Screen {
             g.flush();
             com.mojang.blaze3d.systems.RenderSystem.clear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT,
                     net.minecraft.client.Minecraft.ON_OSX);
-            g.fill(0, 0, this.width, this.height, 0xC8000000);
+            g.fill(0, 0, this.width, this.height, RetroUi.DIM);
         } else {
             g.fill(0, 0, this.width, this.height, RetroUi.BG);
         }

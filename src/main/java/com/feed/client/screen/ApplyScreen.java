@@ -72,7 +72,7 @@ public class ApplyScreen extends ModalScreen {
         y += AccountUi.FIELD_H + 4 + 10;
         description = addField(AccountUi.field(this.font, x, y, w, 200, Component.translatable("feed.apply.description")));
         y += AccountUi.FIELD_H + 4 + 10;
-        about = new MultiLineEditBox(this.font, x, y, w, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
+        about = new RetroTextArea(this.font, x, y, w, ABOUT_H, Component.translatable("feed.apply.about_hint"), Component.empty());
         about.setCharacterLimit(1000);
         addRenderableWidget(about);
         y += ABOUT_H + 4 + 10;

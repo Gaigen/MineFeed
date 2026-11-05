@@ -17,10 +17,29 @@ public final class RetroUi {
     /** Highlighted text (hovered menu items). */
     public static int STRONG = 0xFFFFFFFF;
     public static int CYAN = 0xFF55FFFF;
+    /** Page background behind cards (same as BG on dark themes, a shade darker on the light one). */
+    public static int PAGE = 0xFF000000;
+    /** Modal backdrop over the page. */
+    public static int DIM = 0xC8000000;
     public static final int SHADOW_OFFSET = 3;
     public static final int CHIP_H = 12;
 
     private RetroUi() {
+    }
+
+    /** Centered text without the vanilla shadow. */
+    public static void centered(GuiGraphics g, Font font, String text, int cx, int y, int color) {
+        g.drawString(font, text, cx - font.width(text) / 2, y, color, false);
+    }
+
+    public static void centered(GuiGraphics g, Font font, net.minecraft.network.chat.Component text, int cx, int y, int color) {
+        centered(g, font, text.getString(), cx, y, color);
+    }
+
+    /** Vanilla text fields on MineFeed screens are drawn flat, in theme colors (see the mixins). */
+    public static boolean flatFields() {
+        var screen = net.minecraft.client.Minecraft.getInstance().screen;
+        return screen != null && screen.getClass().getName().startsWith("com.feed.");
     }
 
     public static void drawBox(GuiGraphics g, int x, int y, int w, int h, boolean hovered) {

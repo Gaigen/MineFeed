@@ -547,7 +547,7 @@ public class PostScreen extends ShellScreen {
             List<Action> acts = commentActions(c);
             if (!acts.isEmpty()) {
                 int[] xs = actionXs(acts, x);
-                g.fill(xs[0] - 6, y - 1, x + contentWidth(), y + 9, RetroUi.BG);
+                g.fill(xs[0] - 6, y - 1, x + contentWidth(), y + 9, RetroUi.PAGE);
                 for (int i = 0; i < acts.size(); i++) {
                     Action a = acts.get(i);
                     int aw = this.font.width(a.label());
