@@ -30,6 +30,8 @@ runs {
 
     client {
         systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        // ./gradlew runClient -Ppreview : open the feed from the title screen (UI checks)
+        if (project.hasProperty('preview')) systemProperty 'minefeed.preview', '1'
     }
 }
 
