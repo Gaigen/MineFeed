@@ -134,6 +134,13 @@ public abstract class ModalScreen extends RetroScreen {
         return w;
     }
 
+    /** Registers a custom-drawn clickable area for this frame. */
+    protected void hit(int x, int y, int w, int h, Runnable action) {
+        if (!busy) {
+            buttons.add(new Btn(x, y, w, h, action));
+        }
+    }
+
     protected int buttonWidth(String label) {
         return this.font.width(label) + 12;
     }

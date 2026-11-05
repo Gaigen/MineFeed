@@ -85,6 +85,7 @@ public final class NotificationPoller {
 
     @SubscribeEvent
     public static void onTick(ClientTickEvent.Post event) {
+        com.feed.client.screen.Theme.sync();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (!loaded) {

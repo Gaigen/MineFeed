@@ -306,5 +306,19 @@
   "feed.shots.open": "Open folder",
   "feed.image.loading": "loading",
   "feed.image.failed": "picture unavailable",
-  "feed.image.close": "Esc — close"
+  "feed.image.close": "Esc — close",
+  "feed.nav.theme": "Theme",
+  "feed.theme.title": "Appearance",
+  "feed.theme.hint": "The theme changes right away and is saved.",
+  "feed.theme.dark": "Dark",
+  "feed.theme.dark.sub": "classic terminal",
+  "feed.theme.light": "Light",
+  "feed.theme.light.sub": "paper, for daytime",
+  "feed.theme.nether": "Nether",
+  "feed.theme.nether.sub": "lava and netherrack",
+  "feed.theme.end": "End",
+  "feed.theme.end.sub": "end stone and purpur",
+  "feed.theme.terminal": "Terminal",
+  "feed.theme.terminal.sub": "green monitor",
+  "feed.configuration.theme": "Color theme"
 }

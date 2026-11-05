@@ -97,6 +97,9 @@ public class PostScreen extends RetroScreen {
                 Component.translatable("feed.screen.post.placeholder"));
         input.setMaxLength(MAX_COMMENT);
         input.setBordered(false);
+        input.setTextColor(RetroUi.FG);
+        input.setTextColorUneditable(RetroUi.GRAY);
+        input.setHint(Component.translatable("feed.screen.post.placeholder").withColor(RetroUi.GRAY & 0xFFFFFF));
         input.setResponder(s -> error = null);
         addRenderableWidget(input);
         sendButton = addRenderableWidget(new RetroButton(x + w - 62, inputTop(), 62, INPUT_H,
@@ -457,7 +460,7 @@ public class PostScreen extends RetroScreen {
             int lx = x + PAD;
             for (TagText.Seg seg : TagText.segments(line)) {
                 g.drawString(this.font, seg.text(), lx, lineY,
-                        seg.tag() ? type.accent : RetroUi.FG, false);
+                        seg.tag() ? type.accent() : RetroUi.FG, false);
                 lx += this.font.width(seg.text());
             }
             lineY += this.font.lineHeight + 3;
@@ -476,7 +479,7 @@ public class PostScreen extends RetroScreen {
             int count = post.reactionCount(key);
             EmojiIcon icon = EmojiIcon.byKey(key);
             RetroUi.drawReactionChip(g, this.font, icon, count, rx, by,
-                    type.accent, post.mine(key), RetroUi.BG);
+                    type.accent(), post.mine(key), RetroUi.BG);
             rx += RetroUi.reactionChipWidth(this.font, icon, String.valueOf(count)) + 6;
         }
         String cc = "\u270e " + post.commentCount;

@@ -6,13 +6,17 @@ import net.minecraft.client.gui.GuiGraphics;
 /** Shared drawing helpers for the retro terminal / 8-bit style. */
 public final class RetroUi {
 
-    public static final int BG = 0xFF000000;
-    public static final int FG = 0xFFD6D6D6;
-    public static final int GRAY = 0xFF8A8A8A;
-    public static final int HOVER_BG = 0xFF1C1C1C;
-    public static final int ACCENT = 0xFFFFFF55;
-    public static final int SHADOW = 0xFF2E2E2E;
-    public static final int ERROR = 0xFFFF5555;
+    // Set by Theme (not final on purpose: a theme switch recolors everything at once).
+    public static int BG = 0xFF000000;
+    public static int FG = 0xFFD6D6D6;
+    public static int GRAY = 0xFF8A8A8A;
+    public static int HOVER_BG = 0xFF1C1C1C;
+    public static int ACCENT = 0xFFFFFF55;
+    public static int SHADOW = 0xFF2E2E2E;
+    public static int ERROR = 0xFFFF5555;
+    /** Highlighted text (hovered menu items). */
+    public static int STRONG = 0xFFFFFFFF;
+    public static int CYAN = 0xFF55FFFF;
     public static final int SHADOW_OFFSET = 3;
     public static final int CHIP_H = 12;
 

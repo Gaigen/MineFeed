@@ -11,6 +11,7 @@ public final class FeedConfig {
     public static final ModConfigSpec CLIENT_SPEC;
 
     public static final ModConfigSpec.BooleanValue SHOW_INVENTORY_BUTTON;
+    public static final ModConfigSpec.ConfigValue<String> THEME;
     public static final ModConfigSpec.IntValue INVENTORY_BUTTON_OFFSET_X;
     public static final ModConfigSpec.IntValue INVENTORY_BUTTON_OFFSET_Y;
     public static final ModConfigSpec.BooleanValue ENABLE_DEATH_HOOK;
@@ -38,6 +39,10 @@ public final class FeedConfig {
         ModConfigSpec.Builder client = new ModConfigSpec.Builder();
 
         client.translation(T + "ui").push("ui");
+        THEME = client
+                .comment("Color theme: dark, light, nether, end, terminal")
+                .translation(T + "theme")
+                .define("theme", "dark");
         SHOW_INVENTORY_BUTTON = client
                 .comment("Show MineFeed button to the left of the inventory screen")
                 .translation(T + "showInventoryButton")
@@ -166,6 +171,17 @@ public final class FeedConfig {
     public static String chatTemplate() { return get(CHAT_TEMPLATE, "[MineFeed] {author}: {message}"); }
     public static String deathTemplate() { return get(DEATH_TEMPLATE, "{message}"); }
     public static String advancementTemplate() { return get(ADVANCEMENT_TEMPLATE, "{advancement}"); }
+
+    public static String theme() { return get(THEME, "dark"); }
+
+    public static void setTheme(String id) {
+        try {
+            THEME.set(id);
+            THEME.save();
+        } catch (Exception e) {
+            Feed.LOG.warn("could not save theme", e);
+        }
+    }
 
     private static <T> T get(ModConfigSpec.ConfigValue<T> value, T fallback) {
         try { return value.get(); } catch (Exception e) { return fallback; }

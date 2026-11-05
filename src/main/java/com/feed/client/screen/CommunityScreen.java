@@ -259,7 +259,7 @@ public class CommunityScreen extends ModalScreen {
             g.fill(x, y, x + w, y + h, RetroUi.HOVER_BG);
             boolean self = FeedApiClient.isMine(m.id());
             String role = tr("feed.manage.role." + (m.role() == null ? "member" : m.role()));
-            int roleColor = "owner".equals(m.role()) ? RetroUi.ACCENT : "mod".equals(m.role()) ? 0xFF55FFFF : RetroUi.GRAY;
+            int roleColor = "owner".equals(m.role()) ? RetroUi.ACCENT : "mod".equals(m.role()) ? RetroUi.CYAN : RetroUi.GRAY;
             int bx = x + w - 4;
             String id = m.id();
             String who = m.nick() + " (@" + m.tag() + ")";

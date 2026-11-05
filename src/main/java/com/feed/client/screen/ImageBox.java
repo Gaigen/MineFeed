@@ -29,7 +29,7 @@ public final class ImageBox {
             g.renderOutline(x - 1, y - 1, w + 2, h + 2, RetroUi.GRAY);
             return;
         }
-        g.fill(x, y, x + w, y + h, 0xFF202020);
+        g.fill(x, y, x + w, y + h, RetroUi.HOVER_BG);
         g.renderOutline(x - 1, y - 1, w + 2, h + 2, RetroUi.GRAY);
         String label = failed ? Component.translatable("feed.image.failed").getString()
                 : Component.translatable("feed.image.loading").getString() + (RetroUi.blinkFast() ? "_" : "");

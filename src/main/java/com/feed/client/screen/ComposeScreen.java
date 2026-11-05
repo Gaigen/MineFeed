@@ -203,7 +203,7 @@ public class ComposeScreen extends Screen {
 
         RetroUi.drawBlinkingTitle(g, this.font,
                 Component.translatable(selected.composeTitleKey()).getString().toUpperCase(),
-                x + 10, y + 9, selected.accent);
+                x + 10, y + 9, selected.accent());
         Component hint = Component.translatable("feed.screen.compose.hint");
         var community = parent.community();
         if (community != null && status == null && !sending) {
@@ -217,7 +217,7 @@ public class ComposeScreen extends Screen {
         int cy = y + 24;
         for (PostType t : PostType.values()) {
             String label = chipLabel(t);
-            RetroUi.drawChip(g, this.font, label, cx, cy, t.accent, t == selected);
+            RetroUi.drawChip(g, this.font, label, cx, cy, t.accent(), t == selected);
             cx += RetroUi.chipWidth(this.font, label) + 6;
         }
 

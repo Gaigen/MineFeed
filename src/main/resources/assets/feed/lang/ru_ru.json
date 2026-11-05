@@ -306,5 +306,19 @@
   "feed.shots.open": "Открыть папку",
   "feed.image.loading": "загрузка",
   "feed.image.failed": "картинка недоступна",
-  "feed.image.close": "Esc — закрыть"
+  "feed.image.close": "Esc — закрыть",
+  "feed.nav.theme": "Тема",
+  "feed.theme.title": "Оформление",
+  "feed.theme.hint": "Тема меняется сразу и сохраняется.",
+  "feed.theme.dark": "Тёмная",
+  "feed.theme.dark.sub": "классический терминал",
+  "feed.theme.light": "Светлая",
+  "feed.theme.light.sub": "как бумага, для дня",
+  "feed.theme.nether": "Незер",
+  "feed.theme.nether.sub": "лава и незерак",
+  "feed.theme.end": "Энд",
+  "feed.theme.end.sub": "эндерняк и пурпур",
+  "feed.theme.terminal": "Терминал",
+  "feed.theme.terminal.sub": "зелёный монитор",
+  "feed.configuration.theme": "Тема оформления"
 }

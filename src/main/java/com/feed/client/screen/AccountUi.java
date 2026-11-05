@@ -16,7 +16,7 @@ import java.util.Locale;
 public final class AccountUi {
 
     public static final int FIELD_H = 16;
-    public static final int GREEN = 0xFF55FF55;
+    public static int GREEN = 0xFF55FF55; // set by Theme
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy").withZone(ZoneId.systemDefault());
 
     private AccountUi() {

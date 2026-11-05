@@ -137,7 +137,7 @@ public class ScreenshotPickerScreen extends Screen {
             boolean hover = mouseX >= cx && mouseX < cx + cw && mouseY >= Math.max(cy, top) && mouseY < Math.min(cy + ch, bottom);
             if (t != null) {
                 int[] s = ImageBox.fit(t.w(), t.h(), cw, ch);
-                g.fill(cx, cy, cx + cw, cy + ch, 0xFF101010);
+                g.fill(cx, cy, cx + cw, cy + ch, RetroUi.HOVER_BG);
                 ImageBox.draw(g, this.font, t, false, cx + (cw - s[0]) / 2, cy + (ch - s[1]) / 2, s[0], s[1]);
             } else {
                 ImageBox.draw(g, this.font, null, PostImages.thumbFailed(f), cx, cy, cw, ch);

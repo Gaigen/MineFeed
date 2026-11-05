@@ -43,6 +43,6 @@ public class Post {
     }
 
     public int prefixColor() {
-        return solved ? 0xFF55FF55 : postType().accent;
+        return solved ? PostType.tint.applyAsInt(0xFF55FF55) : postType().accent();
     }
 }

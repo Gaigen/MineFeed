@@ -356,6 +356,8 @@ public class FeedScreen extends RetroScreen {
                 RetroUi.ACCENT, () -> this.minecraft.setScreen(new NotificationsScreen(this))));
         items.add(new Item(tr("feed.nav.profile"), RetroUi.FG, false, null, 0,
                 () -> this.minecraft.setScreen(new ProfileScreen(this))));
+        items.add(new Item(tr("feed.nav.theme"), RetroUi.FG, false, null, 0,
+                () -> this.minecraft.setScreen(new ThemeScreen(this))));
         items.add(new Item(tr("feed.nav.discord"), RetroUi.FG, false, null, 0,
                 () -> net.minecraft.Util.getPlatform().openUri(UpdateChecker.discordUrl())));
         return items;
@@ -454,7 +456,7 @@ public class FeedScreen extends RetroScreen {
         }
         int badgeW = it.badge() == null ? 0 : this.font.width(it.badge()) + 6;
         String label = FeedUtil.clip(this.font, it.label(), sw - 18 - badgeW);
-        int color = (it.active() || hover) && it.color() == RetroUi.FG ? 0xFFFFFFFF : it.color();
+        int color = (it.active() || hover) && it.color() == RetroUi.FG ? RetroUi.STRONG : it.color();
         g.drawString(this.font, label, 10, y + 1, color, false);
         if (it.badge() != null) {
             int bx = sw - 8 - badgeW;
@@ -503,7 +505,7 @@ public class FeedScreen extends RetroScreen {
         List<Tab> list = new ArrayList<>();
         list.add(new Tab(tr("feed.screen.feed.tab.all"), RetroUi.FG, filter == null && !mineOnly, null, false));
         for (PostType type : PostType.values()) {
-            list.add(new Tab(type.prefix, type.accent, filter == type, type, false));
+            list.add(new Tab(type.prefix, type.accent(), filter == type, type, false));
         }
         list.add(new Tab(tr("feed.screen.feed.tab.mine"), RetroUi.ACCENT, mineOnly, null, true));
         return list;
@@ -627,7 +629,7 @@ public class FeedScreen extends RetroScreen {
         for (String key : type.reactions()) {
             int count = post.reactionCount(key);
             EmojiIcon icon = EmojiIcon.byKey(key);
-            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by, type.accent, post.mine(key), cardBg);
+            RetroUi.drawReactionChip(g, this.font, icon, count, rx, by, type.accent(), post.mine(key), cardBg);
             rx += RetroUi.reactionChipWidth(this.font, icon, String.valueOf(count)) + TAB_GAP;
         }
         String cc = "\u270e " + post.commentCount;
