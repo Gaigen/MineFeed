@@ -301,6 +301,9 @@ public class FeedScreen extends RetroScreen {
             List<String> lines = RetroUi.wrap(this.font, post.text != null ? post.text : "", textW);
             int lineStep = this.font.lineHeight + 3;
             int h = PAD + 16 + 6 + lines.size() * lineStep + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
+            if (post.imageUrl != null) {
+                h += imageSize(post, textW)[1] + 6;
+            }
             rows.add(new Row(post, lines, y, h));
             y += h + CARD_GAP;
         }
@@ -575,6 +578,12 @@ public class FeedScreen extends RetroScreen {
         }
     }
 
+    private static final int CARD_IMAGE_H = 140;
+
+    private static int[] imageSize(Post post, int textW) {
+        return ImageBox.fit(post.imageW, post.imageH, textW, CARD_IMAGE_H);
+    }
+
     private void drawCard(GuiGraphics g, Row row, int x, int y, boolean hovered) {
         Post post = row.post();
         PostType type = post.postType();
@@ -606,6 +615,10 @@ public class FeedScreen extends RetroScreen {
         for (String line : row.lines()) {
             g.drawString(this.font, line, x + PAD, lineY, fg, false);
             lineY += this.font.lineHeight + 3;
+        }
+        if (post.imageUrl != null) {
+            int[] s = imageSize(post, w - PAD * 2);
+            ImageBox.draw(g, this.font, post.imageUrl, x + PAD, lineY + 3, s[0], s[1]);
         }
 
         int cardBg = hovered ? RetroUi.HOVER_BG : RetroUi.BG;

@@ -19,6 +19,9 @@ public class Post {
     public List<String> tags;
     public boolean solved;
     public String space;    // "global" or community id
+    public String imageUrl; // first picture (Discord CDN), null when none
+    public int imageW;
+    public int imageH;
 
     public Post() {
     }

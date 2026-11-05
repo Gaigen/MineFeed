@@ -294,5 +294,17 @@
   "feed.notif.request": "New join request for «%s»",
   "feed.notif.accepted": "You were accepted into «%s»",
   "feed.notif.app_approved": "Community «%s» approved and created!",
-  "feed.notif.app_rejected": "Community application declined: %s"
+  "feed.notif.app_rejected": "Community application declined: %s",
+  "feed.compose.screenshot": "+ Screenshot",
+  "feed.compose.remove_image": "Remove",
+  "feed.compose.screenshot_tip": "F2 in game takes a screenshot",
+  "feed.compose.uploading": "Uploading picture…",
+  "feed.compose.image_failed": "Couldn't prepare the picture",
+  "feed.shots.title": "Pick a screenshot",
+  "feed.shots.empty": "No screenshots yet. Press F2 in game and it will show up here.",
+  "feed.shots.hint": "Latest screenshots from the screenshots folder",
+  "feed.shots.open": "Open folder",
+  "feed.image.loading": "loading",
+  "feed.image.failed": "picture unavailable",
+  "feed.image.close": "Esc — close"
 }

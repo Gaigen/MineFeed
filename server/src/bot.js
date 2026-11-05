@@ -5,6 +5,7 @@ import { dapi, snowflakeTime } from "./dapi.js";
 import { TYPES, MAX_POST, markPostDeleted, markCommentDeleted } from "./feed.js";
 import * as N from "./notify.js";
 import * as C from "./communities.js";
+import { fromAttachments } from "./images.js";
 
 const MAX_EVENTS = 100;
 const MAX_DISCORD_TEXT = 1000;
@@ -32,11 +33,7 @@ export function discordText(d) {
 }
 
 function images(d) {
-  const list = (d.attachments || [])
-    .filter((a) => /^image\//.test(a.content_type || "") && a.width && a.height)
-    .slice(0, 4)
-    .map((a) => ({ url: a.url, w: a.width, h: a.height }));
-  return list.length ? JSON.stringify(list) : null;
+  return fromAttachments(d.attachments);
 }
 
 async function ourWebhooks(env) {

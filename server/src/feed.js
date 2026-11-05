@@ -3,6 +3,7 @@ import { HttpError } from "./util.js";
 import { rateLimit } from "./accounts.js";
 import { dapi, webhookName } from "./dapi.js";
 import * as N from "./notify.js";
+import { parseUpload, freshen } from "./images.js";
 
 export const TYPES = ["rip", "help", "gg", "talk"];
 export const MAX_POST = 500;
@@ -83,10 +84,11 @@ async function spaceFor(env, account, id) {
   return { ...(await getSpace(env, sid)), role: m.role };
 }
 
-async function postAs(env, space, account, payload, threadId) {
+async function postAs(env, space, account, payload, threadId, files) {
   const q = "?wait=true" + (threadId ? `&thread_id=${threadId}` : "");
   return dapi(env, "POST", `/webhooks/${space.webhook_id}/${space.webhook_token}${q}`, {
     auth: false,
+    files: files || undefined,
     body: {
       ...payload,
       username: webhookName(account.nick, account.tag),
@@ -143,6 +145,7 @@ async function myReactions(env, account, ids) {
 }
 
 async function postsOut(env, account, rows) {
+  await freshen(env, rows, "posts");
   const my = await myReactions(env, account, rows.filter((r) => !r.deleted).map((r) => r.id));
   return rows.map((r) => postOut(r, my[r.id]));
 }
@@ -225,6 +228,7 @@ async function commentsPage(env, postId, before) {
   ).bind(...binds, COMMENTS_PAGE + 1).all();
   const more = results.length > COMMENTS_PAGE;
   const rows = results.slice(0, COMMENTS_PAGE).reverse(); // oldest first for display
+  await freshen(env, rows, "comments");
   return { comments: rows.map(commentOut), before: more ? cursorOf(rows[0]) : null };
 }
 
@@ -257,7 +261,7 @@ export async function sync(env, account, q, now) {
     const c = await env.DB.prepare(
       `${COMMENT_SELECT} WHERE c.post_id = ? AND c.updated_at > ? ORDER BY c.updated_at LIMIT 101`
     ).bind(postId, from).all();
-    out.comments = c.results.slice(0, 100).map(commentOut);
+    out.comments = (await freshen(env, c.results.slice(0, 100), "comments")).map(commentOut);
   }
   return out;
 }
@@ -275,22 +279,26 @@ async function unreadCounts(env, account) {
 
 // ---------- writing ----------
 
-/** POST /v2/posts {space, type, text} */
+/** POST /v2/posts {space, type, text, image?: {data: base64 PNG/JPEG}} — text may be empty with a picture. */
 export async function createPost(env, account, body, now) {
   const space = await spaceFor(env, account, body.space);
   if (!TYPES.includes(body.type)) throw new HttpError(400, "bad_type", "Неизвестный тип поста");
-  const text = cleanText(body.text, MAX_POST);
+  const file = body.image ? parseUpload(body.image) : null;
+  const text = file && !String(body.text ?? "").trim() ? "" : cleanText(body.text, MAX_POST);
   await rateLimit(env, "post", account.id, now);
+  if (file) await rateLimit(env, "image", account.id, now);
   const tag = space.tagIds[body.type];
   const msg = await postAs(env, space, account, {
     content: text,
-    thread_name: threadName(text),
+    thread_name: text ? threadName(text) : `📷 ${account.nick}`,
     ...(tag ? { applied_tags: [tag] } : {}),
-  });
+  }, null, file ? [file] : null);
   const id = msg.channel_id;
+  const att = (msg.attachments || [])[0];
+  const image = file && att ? JSON.stringify([{ url: att.url, w: att.width || file.w, h: att.height || file.h }]) : null;
   await env.DB.prepare(
-    "INSERT INTO posts (id, space, author_id, type, text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, space.id, account.id, body.type, text, now, now).run();
+    "INSERT INTO posts (id, space, author_id, type, text, image, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, space.id, account.id, body.type, text, image, now, now).run();
   await N.mentions(env, account, text, { postId: id, space: space.id, skip: [] }, now);
   return { post: postOut({ ...(await loadPost(env, id)) }, -1) };
 }

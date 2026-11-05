@@ -311,6 +311,9 @@ public class PostScreen extends RetroScreen {
         int lineStep = this.font.lineHeight + 3;
         postHeight = PAD + headerH + 6 + postLines.size() * lineStep
                 + 6 + RetroUi.CHIP_H + PAD + RetroUi.SHADOW_OFFSET;
+        if (post.imageUrl != null) {
+            postHeight += postImageSize()[1] + 6;
+        }
 
         rows.clear();
         int y = postHeight + CARD_GAP;
@@ -320,11 +323,27 @@ public class PostScreen extends RetroScreen {
         for (Comment c : comments) {
             List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
             int h = 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4;
+            if (c.imageUrl != null) {
+                h += commentImageSize(c)[1] + 4;
+            }
             rows.add(new Row(c, lines, y, h));
             y += h + 6;
         }
         contentHeight = y;
         clampScroll();
+    }
+
+    private static final int POST_IMAGE_H = 220;
+    private static final int COMMENT_IMAGE_H = 90;
+    /** Screen rect of the post picture in the last frame (x, y, w, h), for clicks. */
+    private int[] postImageRect;
+
+    private int[] postImageSize() {
+        return ImageBox.fit(post.imageW, post.imageH, contentWidth() - PAD * 2, POST_IMAGE_H);
+    }
+
+    private int[] commentImageSize(Comment c) {
+        return ImageBox.fit(c.imageW, c.imageH, Math.min(200, contentWidth() - PAD * 2 - 8), COMMENT_IMAGE_H);
     }
 
     private int heightOf(List<Comment> list) {
@@ -333,6 +352,9 @@ public class PostScreen extends RetroScreen {
         for (Comment c : list) {
             List<String> lines = RetroUi.wrap(this.font, c.text != null ? c.text : "", textW - 8);
             h += 3 + this.font.lineHeight + 3 + lines.size() * (this.font.lineHeight + 2) + 4 + 6;
+            if (c.imageUrl != null) {
+                h += commentImageSize(c)[1] + 4;
+            }
         }
         return h;
     }
@@ -440,6 +462,13 @@ public class PostScreen extends RetroScreen {
             }
             lineY += this.font.lineHeight + 3;
         }
+        if (post.imageUrl != null) {
+            int[] s = postImageSize();
+            ImageBox.draw(g, this.font, post.imageUrl, x + PAD, lineY + 3, s[0], s[1]);
+            postImageRect = new int[]{x + PAD, lineY + 3, s[0], s[1]};
+        } else {
+            postImageRect = null;
+        }
 
         int by = y + postHeight - PAD - RetroUi.CHIP_H;
         int rx = x + PAD;
@@ -478,6 +507,10 @@ public class PostScreen extends RetroScreen {
             }
             ly += this.font.lineHeight + 2;
         }
+        if (c.imageUrl != null) {
+            int[] s = commentImageSize(c);
+            ImageBox.draw(g, this.font, c.imageUrl, x + 8, ly + 1, s[0], s[1]);
+        }
     }
 
     @Override
@@ -497,6 +530,12 @@ public class PostScreen extends RetroScreen {
         }
         if (button != 0) {
             return false;
+        }
+
+        if (postImageRect != null && mouseX >= postImageRect[0] && mouseX < postImageRect[0] + postImageRect[2]
+                && mouseY >= Math.max(postImageRect[1], TOP) && mouseY < Math.min(postImageRect[1] + postImageRect[3], listBottom())) {
+            this.minecraft.setScreen(new ImageViewScreen(this, post.imageUrl, post.imageW, post.imageH));
+            return true;
         }
 
         if (nextBefore != null && !loadingOlder && loadOlderY != Integer.MIN_VALUE

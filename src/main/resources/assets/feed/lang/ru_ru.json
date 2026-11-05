@@ -294,5 +294,17 @@
   "feed.notif.request": "Новая заявка на вступление в «%s»",
   "feed.notif.accepted": "Тебя приняли в «%s»",
   "feed.notif.app_approved": "Сообщество «%s» одобрено и создано!",
-  "feed.notif.app_rejected": "Заявка на сообщество отклонена: %s"
+  "feed.notif.app_rejected": "Заявка на сообщество отклонена: %s",
+  "feed.compose.screenshot": "+ Скриншот",
+  "feed.compose.remove_image": "Убрать",
+  "feed.compose.screenshot_tip": "F2 в игре — сделать скриншот",
+  "feed.compose.uploading": "Загружаю картинку…",
+  "feed.compose.image_failed": "Не удалось подготовить картинку",
+  "feed.shots.title": "Выбери скриншот",
+  "feed.shots.empty": "Скриншотов пока нет. Нажми F2 в игре — и он появится здесь.",
+  "feed.shots.hint": "Последние скриншоты из папки screenshots",
+  "feed.shots.open": "Открыть папку",
+  "feed.image.loading": "загрузка",
+  "feed.image.failed": "картинка недоступна",
+  "feed.image.close": "Esc — закрыть"
 }

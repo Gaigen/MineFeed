@@ -150,10 +150,21 @@ public final class FeedApiClient {
     }
 
     public CompletableFuture<Post> createPost(String space, String text, PostType type) {
+        return createPost(space, text, type, null);
+    }
+
+    /** imageJpeg: base64 JPEG from PostImages.encodeForUpload, or null. */
+    public CompletableFuture<Post> createPost(String space, String text, PostType type, String imageJpeg) {
         JsonObject body = new JsonObject();
         body.addProperty("space", space == null ? "global" : space);
         body.addProperty("type", type.id);
         body.addProperty("text", text);
+        if (imageJpeg != null) {
+            JsonObject img = new JsonObject();
+            img.addProperty("type", "image/jpeg");
+            img.addProperty("data", imageJpeg);
+            body.add("image", img);
+        }
         return call("POST", "/v2/posts", body).thenApply(o -> toPost(o.getAsJsonObject("post")));
     }
 
@@ -312,6 +323,12 @@ public final class FeedApiClient {
         p.tags = List.of();
         p.solved = bool(o, "solved");
         p.space = str(o, "space");
+        JsonObject img = firstImage(o);
+        if (img != null) {
+            p.imageUrl = str(img, "url");
+            p.imageW = img.has("w") ? img.get("w").getAsInt() : 0;
+            p.imageH = img.has("h") ? img.get("h").getAsInt() : 0;
+        }
         return p;
     }
 
@@ -333,7 +350,22 @@ public final class FeedApiClient {
         c.authorId = str(a, "id");
         c.authorTag = str(a, "tag");
         c.createdAt = iso(o.get("createdAt").getAsLong());
+        JsonObject img = firstImage(o);
+        if (img != null) {
+            c.imageUrl = str(img, "url");
+            c.imageW = img.has("w") ? img.get("w").getAsInt() : 0;
+            c.imageH = img.has("h") ? img.get("h").getAsInt() : 0;
+        }
         return c;
+    }
+
+    private static JsonObject firstImage(JsonObject o) {
+        JsonElement e = o.get("image");
+        if (e == null || !e.isJsonArray() || e.getAsJsonArray().isEmpty()) {
+            return null;
+        }
+        JsonElement first = e.getAsJsonArray().get(0);
+        return first.isJsonObject() ? first.getAsJsonObject() : null;
     }
 
     private static String actorName(JsonObject a) {

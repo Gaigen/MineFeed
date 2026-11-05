@@ -21,14 +21,20 @@ function setup() {
     BOT_SECRET: "bot-secret-0123456789",
     DISCORD_FETCH: async (url, init = {}) => {
       const u = new URL(url);
-      const body = init.body ? JSON.parse(init.body) : null;
-      calls.push({ method: init.method, path: u.pathname, search: u.search, body });
+      const form = init.body instanceof FormData ? init.body : null;
+      const body = form ? JSON.parse(form.get("payload_json")) : init.body ? JSON.parse(init.body) : null;
+      const files = form ? [...form.entries()].filter(([k]) => k.startsWith("files[")).map(([, f]) => f) : [];
+      calls.push({ method: init.method, path: u.pathname, search: u.search, body, files });
+      if (u.pathname === "/api/v10/attachments/refresh-urls") {
+        return Response.json({ refreshed_urls: body.attachment_urls.map((o) => ({ original: o, refreshed: o.replace(/ex=[0-9a-f]+/, "ex=ffffffff") })) });
+      }
       if (init.method === "POST" && u.pathname === "/api/v10/channels/900/webhooks") return Response.json({ id: "wh1", token: "tok" });
       if (init.method === "POST" && u.pathname === "/api/v10/webhooks/wh1/tok") {
         const id = String(seq++);
         const thread = u.searchParams.get("thread_id");
         if (thread === "404") return new Response("{}", { status: 404 });
-        return Response.json({ id, channel_id: thread || id });
+        const attachments = files.map((f, i) => ({ id: `a${i}`, url: `https://cdn.discordapp.com/attachments/${thread || id}/a${i}/${f.name}?ex=6a000000&is=1&hm=abc`, width: 2, height: 1, content_type: f.type }));
+        return Response.json({ id, channel_id: thread || id, attachments });
       }
       if (init.method === "DELETE" || init.method === "PATCH") return new Response(null, { status: 204 });
       if (u.pathname === "/api/v10/channels/777/messages") return Response.json({ id: "r1" });
@@ -236,4 +242,32 @@ test("bot events", async () => {
   assert.equal((await api("DELETE", "/v2/posts/555", { key: a.key })).status, 200);
   r = await api("POST", "/v2/bot/events", { auth, body: { events: [ev("THREAD_DELETE", { id: post.id })] }, now: T0 + 7000 });
   assert.equal((await api("GET", `/v2/posts/${post.id}`, { key: a.key })).status, 404);
+});
+
+// 2x1 PNG header is enough for the size check
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 2, 0, 0, 0, 1, 8, 6, 0, 0, 0]).toString("base64");
+
+test("posts with a picture: upload to Discord, refresh expired links", async () => {
+  const { api, user, calls, env } = setup();
+  const a = await user("alice");
+  const r = await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "", image: { type: "image/png", data: PNG } } });
+  assert.equal(r.status, 201);
+  const post = r.data.post;
+  assert.equal(post.text, "");
+  assert.equal(post.image.length, 1);
+  assert.deepEqual([post.image[0].w, post.image[0].h], [2, 1]);
+  const up = calls.find((c) => c.path === "/api/v10/webhooks/wh1/tok" && c.files.length);
+  assert.equal(up.files[0].name, "screenshot.png");
+  assert.equal(up.body.thread_name, "📷 ALICE");
+
+  assert.equal((await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "x", image: { data: "aGVsbG8=" } } })).status, 400);
+  assert.equal((await api("POST", "/v2/posts", { key: a.key, body: { type: "gg", text: "" } })).status, 400);
+
+  // the stored link is expired (ex=6a000000 < T0): reading the feed refreshes and saves it
+  env.DISCORD_BOT_TOKEN = "t";
+  const feed = await api("GET", "/v2/feed", { key: a.key });
+  assert.match(feed.data.posts[0].image[0].url, /ex=ffffffff/);
+  const n = calls.filter((c) => c.path === "/api/v10/attachments/refresh-urls").length;
+  await api("GET", "/v2/feed", { key: a.key });
+  assert.equal(calls.filter((c) => c.path === "/api/v10/attachments/refresh-urls").length, n); // already fresh
 });

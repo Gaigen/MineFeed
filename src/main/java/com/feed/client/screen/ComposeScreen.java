@@ -1,6 +1,7 @@
 package com.feed.client.screen;
 
 import com.feed.client.FeedApiClient;
+import com.feed.client.PostImages;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.MultiLineEditBox;
@@ -10,13 +11,17 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
+import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
+
 /** Compose panel with type selector. Ctrl+Enter submits. */
 @OnlyIn(Dist.CLIENT)
 public class ComposeScreen extends Screen {
 
     private static final int MAX = 500;
     private static final int INPUT_H = 80;
-    private static final int PANEL_H = 24 + RetroUi.CHIP_H + 6 + INPUT_H + 12 + 18 + 24;
+    private static final int ATTACH_H = 28;
+    private static final int PANEL_H = 24 + RetroUi.CHIP_H + 6 + INPUT_H + 8 + ATTACH_H + 8 + 18 + 24;
 
     private final FeedScreen parent;
 
@@ -26,6 +31,10 @@ public class ComposeScreen extends Screen {
     private final String prefill;
     private Component status;
     private boolean sending;
+    private Path attached;
+    private String draft;
+    private RetroButton attachButton;
+    private RetroButton removeButton;
 
     public ComposeScreen(FeedScreen parent) {
         this(parent, PostType.TALK, null);
@@ -51,11 +60,20 @@ public class ComposeScreen extends Screen {
                 Component.translatable("feed.screen.compose.placeholder"), Component.empty());
         input.setCharacterLimit(MAX);
         addRenderableWidget(input);
-        if (prefill != null && input.getValue().isEmpty()) {
+        if (draft != null) {
+            input.setValue(draft);
+        } else if (prefill != null && input.getValue().isEmpty()) {
             input.setValue(prefill.length() > MAX ? prefill.substring(0, MAX) : prefill);
         }
 
-        int buttonY = inputY + INPUT_H + 12;
+        int attachY = inputY + INPUT_H + 8;
+        attachButton = addRenderableWidget(new RetroButton(inputX, attachY + (ATTACH_H - 18) / 2, 100, 18,
+                Component.translatable("feed.compose.screenshot"), b -> pickScreenshot()));
+        removeButton = addRenderableWidget(new RetroButton(inputX + inputW - 70, attachY + (ATTACH_H - 18) / 2, 70, 18,
+                Component.translatable("feed.compose.remove_image"), b -> attached = null));
+        updateAttachButtons();
+
+        int buttonY = attachY + ATTACH_H + 8;
         int buttonW = (inputW - 8) / 2;
         sendButton = addRenderableWidget(new RetroButton(inputX, buttonY, buttonW, 18,
                 Component.translatable("feed.screen.compose.send"), b -> submit()));
@@ -65,19 +83,63 @@ public class ComposeScreen extends Screen {
         setInitialFocus(input);
     }
 
+    private void pickScreenshot() {
+        draft = input.getValue();
+        this.minecraft.setScreen(new ScreenshotPickerScreen(this, p -> attached = p));
+    }
+
+    private void updateAttachButtons() {
+        if (attachButton != null) {
+            attachButton.visible = attached == null;
+            removeButton.visible = attached != null;
+            attachButton.active = !sending;
+            removeButton.active = !sending;
+        }
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        updateAttachButtons();
+    }
+
     private void submit() {
         if (sending) {
             return;
         }
         String text = input.getValue().trim();
-        if (text.isEmpty()) {
+        if (text.isEmpty() && attached == null) {
             status = Component.translatable("feed.screen.compose.empty");
             return;
         }
         sending = true;
         sendButton.active = false;
         status = null;
-        FeedApiClient.INSTANCE.createPost(parent.space(), text, selected).whenComplete((post, ex) ->
+        Path file = attached;
+        CompletableFuture<String> image = file == null ? CompletableFuture.completedFuture(null)
+                : CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return PostImages.encodeForUpload(file);
+                    } catch (Exception e) {
+                        throw new IllegalStateException("image", e);
+                    }
+                });
+        image.handle((jpeg, ex) -> {
+            if (ex != null) {
+                this.minecraft.execute(() -> {
+                    sending = false;
+                    sendButton.active = true;
+                    status = Component.translatable("feed.compose.image_failed");
+                });
+                return null;
+            }
+            send(text, jpeg);
+            return null;
+        });
+    }
+
+    private void send(String text, String jpeg) {
+        FeedApiClient.INSTANCE.createPost(parent.space(), text, selected, jpeg).whenComplete((post, ex) ->
                 this.minecraft.execute(() -> {
                     sending = false;
                     sendButton.active = true;
@@ -161,9 +223,24 @@ public class ComposeScreen extends Screen {
 
         g.renderOutline(x + 9, y + 24 + RetroUi.CHIP_H + 5, w - 18, INPUT_H + 2, RetroUi.FG);
 
+        int attachY = y + 24 + RetroUi.CHIP_H + 6 + INPUT_H + 8;
+        if (attached != null) {
+            PostImages.Tex t = PostImages.thumb(attached);
+            int th = ATTACH_H - 2;
+            int tw = th * 16 / 9;
+            int[] s = t != null ? ImageBox.fit(t.w(), t.h(), tw, th) : new int[]{tw, th};
+            ImageBox.draw(g, this.font, t, PostImages.thumbFailed(attached), x + 10, attachY + 1 + (th - s[1]) / 2, s[0], s[1]);
+            String name = com.feed.client.FeedUtil.clip(this.font, attached.getFileName().toString(), w - 20 - tw - 8 - 76);
+            g.drawString(this.font, name, x + 10 + tw + 8, attachY + (ATTACH_H - 8) / 2, RetroUi.FG, false);
+        } else {
+            String tip = Component.translatable("feed.compose.screenshot_tip").getString();
+            g.drawString(this.font, com.feed.client.FeedUtil.clip(this.font, tip, w - 20 - 108), x + 10 + 108,
+                    attachY + (ATTACH_H - 8) / 2, RetroUi.GRAY, false);
+        }
+
         int statusY = y + PANEL_H - 16;
         if (sending) {
-            String text = Component.translatable("feed.screen.compose.sending").getString()
+            String text = Component.translatable(attached != null ? "feed.compose.uploading" : "feed.screen.compose.sending").getString()
                     + (RetroUi.blinkFast() ? "\u25ae" : "");
             g.drawString(this.font, text, x + 10, statusY, RetroUi.GRAY, false);
         } else if (status != null) {
