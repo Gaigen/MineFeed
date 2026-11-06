@@ -184,6 +184,8 @@ public final class AccountApi {
                 .timeout(TIMEOUT)
                 .header("User-Agent", userAgent)
                 .header("Accept", "application/json");
+        String lang = language.get();
+        if (lang != null && !lang.isBlank()) req.header("Accept-Language", lang.replace('_', '-'));
         if (auth) {
             String key = keySupplier.get();
             if (key == null || key.isEmpty()) {

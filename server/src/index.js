@@ -1,3 +1,4 @@
+import { messageFor } from "./messages.js";
 // MineFeed API v2. Bindings: DB (D1). Vars: MIN_CLIENT, LATEST_CLIENT, DOWNLOAD_URL, DISCORD_CLIENT_ID.
 // Secrets: DISCORD_CLIENT_SECRET, DISCORD_BOT_TOKEN.
 import { HttpError, json, errorResponse, readJson } from "./util.js";
@@ -19,9 +20,12 @@ export default {
     try {
       return await route(request, env, Date.now());
     } catch (e) {
-      if (e instanceof HttpError) return errorResponse(e);
+      if (e instanceof HttpError) {
+        e.message = messageFor(e.message, request.headers.get("accept-language"));
+        return errorResponse(e);
+      }
       console.error(e);
-      return json({ error: "Внутренняя ошибка сервера", code: "internal" }, 500);
+      return json({ error: messageFor("Внутренняя ошибка сервера", request.headers.get("accept-language")), code: "internal" }, 500);
     }
   },
   async scheduled(_event, env) {
@@ -45,7 +49,9 @@ export async function route(request, env, now) {
     }, 200, { "cache-control": "public, max-age=300" });
   }
   if (p === "/v2/tags/check" && m === "GET") {
-    return json(await A.checkTag(env, url.searchParams.get("tag"), now, await optionalAccount(request, env, now)));
+    const result = await A.checkTag(env, url.searchParams.get("tag"), now, await optionalAccount(request, env, now));
+    if (result.reason) result.reason = messageFor(result.reason, request.headers.get("accept-language"));
+    return json(result);
   }
   if (p === "/v2/discord/start" && m === "POST") {
     return json(await D.start(request, env, await readJson(request), await optionalAccount(request, env, now), now));
@@ -53,7 +59,11 @@ export async function route(request, env, now) {
   const goMatch = /^\/v2\/discord\/go\/([A-Za-z0-9_-]{16,64})$/.exec(p);
   if (goMatch && m === "GET") return D.go(request, env, goMatch[1], now);
   if (p === "/v2/discord/callback" && m === "GET") return D.callback(request, env, now);
-  if (p === "/v2/discord/poll" && m === "POST") return json(await D.poll(env, await readJson(request), now));
+  if (p === "/v2/discord/poll" && m === "POST") {
+    const result = await D.poll(env, await readJson(request), now);
+    if (result.error) result.error = messageFor(result.error, request.headers.get("accept-language"));
+    return json(result);
+  }
   if (p === "/v2/auth/register" && m === "POST") return json(await A.register(request, env, await readJson(request), now), 201);
   if (p === "/v2/auth/recover" && m === "POST") return json(await A.recover(request, env, await readJson(request), now));
 

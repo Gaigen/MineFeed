@@ -66,7 +66,7 @@ public final class TagChecker {
                 set(State.FREE, Component.translatable("feed.account.tag.free", "@" + r.tag()));
             } else if (r.isProtected()) {
                 set(State.TAKEN, Component.translatable("feed.account.tag.protected"));
-            } else if (r.reason() != null && !r.reason().isBlank() && !r.reason().contains("занят")) {
+            } else if (r.reason() != null && !r.reason().isBlank() && !r.reason().contains("занят") && !r.reason().equals("Tag is already taken")) {
                 set(State.TAKEN, Component.literal(r.reason()));
             } else {
                 set(State.TAKEN, Component.translatable("feed.account.tag.taken"));
