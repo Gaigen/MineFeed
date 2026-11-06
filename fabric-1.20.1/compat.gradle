@@ -1,0 +1,57 @@
+// Translate the small set of Minecraft API changes between 1.21.1 and 1.20.1.
+// Fail the build if the expected source patterns disappear, rather than silently
+// shipping an incomplete port after changes to the shared code.
+prepareShared.configure {
+    doLast {
+        def root = destinationDir
+        def sources = fileTree(root).matching { include '**/*.java' }.files
+        def replaceEverywhere = { String before, String after, int expected ->
+            int count = 0
+            sources.each { f ->
+                def s = f.getText('UTF-8')
+                int n = s.split(java.util.regex.Pattern.quote(before), -1).length - 1
+                if (n > 0) { f.setText(s.replace(before, after), 'UTF-8'); count += n }
+            }
+            if (count != expected) throw new GradleException("1.20.1 compatibility pattern changed (expected ${expected}, got ${count}): ${before}")
+        }
+        def replaceIn = { String path, String before, String after ->
+            def f = new File(root, path); def s = f.getText('UTF-8')
+            int n = s.split(java.util.regex.Pattern.quote(before), -1).length - 1
+            if (n != 1) throw new GradleException("1.20.1 compatibility pattern changed in ${path}: ${before}")
+            f.setText(s.replace(before, after), 'UTF-8')
+        }
+        replaceEverywhere('ResourceLocation.fromNamespaceAndPath(', 'new ResourceLocation(', 3)
+        replaceEverywhere('SystemToast.SystemToastId.', 'SystemToast.SystemToastIds.', 3)
+        replaceEverywhere('.withColor(RetroUi.GRAY & 0xFFFFFF)', '.withStyle(style -> style.withColor(RetroUi.GRAY & 0xFFFFFF))', 5)
+        replaceEverywhere('mouseScrolled(double mouseX, double mouseY, double dx, double dy)', 'mouseScrolled(double mouseX, double mouseY, double dy)', 9)
+        replaceEverywhere('super.mouseScrolled(mouseX, mouseY, dx, dy)', 'super.mouseScrolled(mouseX, mouseY, dy)', 7)
+        replaceEverywhere('renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick)', 'renderBackground(GuiGraphics g)', 10)
+        replaceEverywhere('super.renderBackground(g, mouseX, mouseY, partialTick)', 'super.renderBackground(g)', 4)
+        replaceEverywhere('back.render(g, -1, -1, partialTick)', 'back.render(g, -1, -1, net.minecraft.client.Minecraft.getInstance().getFrameTime())', 2)
+        replaceIn('com/feed/client/screen/PostScreen.java', '        super.renderBackground(g);', '''        super.renderBackground(g);
+        int mouseX = (int) (minecraft.mouseHandler.xpos() * width / minecraft.getWindow().getScreenWidth());
+        int mouseY = (int) (minecraft.mouseHandler.ypos() * height / minecraft.getWindow().getScreenHeight());''')
+        replaceIn('com/feed/client/screen/ShellScreen.java', 'ConfirmLinkScreen.confirmLinkNow(this, UpdateChecker.downloadUrl())', 'ConfirmLinkScreen.confirmLinkNow(UpdateChecker.downloadUrl(), this, false)')
+        replaceIn('com/feed/client/screen/CommunityScreen.java', 'ConfirmLinkScreen.confirmLinkNow(this, url)', 'ConfirmLinkScreen.confirmLinkNow(url, this, false)')
+        replaceIn('com/feed/client/AvatarCache.java', 'Map.Entry<String, Entry> eldest', 'Map.Entry<String, AvatarCache.Entry> eldest')
+        replaceIn('com/feed/client/AvatarCache.java', 'Entry e = eldest.getValue()', 'AvatarCache.Entry e = eldest.getValue()')
+        replaceIn('com/feed/client/AdvancementHook.java', 'import net.minecraft.advancements.AdvancementHolder;', 'import net.minecraft.advancements.Advancement;')
+        replaceIn('com/feed/client/AdvancementHook.java', 'onAdvancement(AdvancementHolder adv)', 'onAdvancement(Advancement adv)')
+        replaceIn('com/feed/client/AdvancementHook.java', 'adv.value().display().map(d -> d.getTitle()).orElse(null)', 'adv.getDisplay() == null ? null : adv.getDisplay().getTitle()')
+        replaceIn('com/feed/mixin/FabricAdvancementsMixin.java', 'import net.minecraft.advancements.AdvancementHolder;', 'import net.minecraft.advancements.Advancement;')
+        replaceIn('com/feed/mixin/FabricAdvancementsMixin.java', 'Map<AdvancementHolder, AdvancementProgress>', 'Map<Advancement, AdvancementProgress>')
+        replaceEverywhere('holder.id()', 'holder.getId()', 3)
+        // In 1.20.1 Screen.render does not call renderBackground automatically.
+        replaceIn('com/feed/client/screen/RetroScreen.java', '    @Override\n    public boolean isPauseScreen()', '''    @Override
+    public void render(net.minecraft.client.gui.GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        renderBackground(g);
+        super.render(g, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean isPauseScreen()''')
+        ['ComposeScreen', 'ScreenshotPickerScreen', 'ImageViewScreen'].each { name ->
+            replaceIn("com/feed/client/screen/${name}.java", '        super.render(g, mouseX, mouseY, partialTick);', '        renderBackground(g);\n        super.render(g, mouseX, mouseY, partialTick);')
+        }
+    }
+}

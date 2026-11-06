@@ -1,0 +1,5 @@
+{
+ "required": true, "minVersion": "0.8", "package": "com.feed.mixin", "compatibilityLevel": "JAVA_17",
+ "client": ["EditBoxMixin", "MultiLineEditBoxMixin", "MultiLineEditBoxAccessor", "ContainerScreenAccessor", "DeathScreenAccessor", "FabricMouseMixin", "FabricAdvancementsMixin"],
+ "injectors": {"defaultRequire": 1}
+}

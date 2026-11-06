@@ -1,0 +1,38 @@
+plugins { id 'fabric-loom' version '1.14.10' }
+def modProperties = new Properties()
+file('../gradle.properties').withInputStream { modProperties.load(it) }
+version = modProperties.getProperty('mod_version') + '-fabric-wip'
+group = 'com.feed'
+base { archivesName = 'feed-fabric-1.20.1' }
+repositories { mavenCentral() }
+dependencies {
+    minecraft 'com.mojang:minecraft:1.20.1'
+    mappings loom.officialMojangMappings()
+    modImplementation 'net.fabricmc:fabric-loader:0.18.6'
+    modImplementation 'net.fabricmc.fabric-api:fabric-api:0.92.12+1.20.1'
+}
+java { toolchain.languageVersion = JavaLanguageVersion.of(21) }
+def shared = tasks.register('prepareShared', Sync) {
+    inputs.file('compat.gradle')
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    from('../src/main/java') {
+        exclude 'com/feed/Feed.java', 'com/feed/client/NeoEvents.java', 'com/feed/client/FeedConfig.java',
+                'com/feed/client/ModKeyMappings.java', 'com/feed/client/DevPreview.java'
+    }
+    from('../fabric/src/main/java')
+    from('src/overrides/java')
+    into layout.buildDirectory.dir('generated/shared')
+}
+sourceSets.main.java.srcDirs = []
+sourceSets.main.java.srcDir(shared)
+sourceSets.main.resources.srcDir('../src/main/resources')
+processResources {
+    exclude 'META-INF/neoforge.mods.toml', 'pack.mcmeta', 'feed.mixins.json', 'assets/feed/font/OFL.txt'
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 17 }
+jar {
+    from('../LICENSE') { rename { 'LICENSE_MineFeed' } }
+    from('../src/main/resources/assets/feed/font/OFL.txt') { rename { 'FONT_LICENSE_OFL.txt' } }
+}
+apply from: 'compat.gradle'
