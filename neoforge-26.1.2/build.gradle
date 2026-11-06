@@ -1,0 +1,13 @@
+plugins { id 'java-library'; id 'net.neoforged.moddev' version '2.0.148' }
+version = '0.2.0-dev19-neoforge-26.1.2-wip'
+group = 'com.feed'
+base { archivesName = 'minefeed-neoforge-26.1.2' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+neoForge {
+ version = '26.1.2.126'
+ runs { client { client() } }
+ mods { feed { sourceSet(sourceSets.main) } }
+}
+tasks.withType(JavaCompile).configureEach { options.encoding='UTF-8'; options.release=25 }
+processResources { exclude 'assets/feed/font/OFL.txt' }
+jar { from('../LICENSE') { rename { 'LICENSE_MineFeed' } }; from('../src/main/resources/assets/feed/font/OFL.txt') { rename { 'FONT_LICENSE_OFL.txt' } } }
