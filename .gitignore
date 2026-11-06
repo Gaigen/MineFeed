@@ -35,3 +35,6 @@ docs/feed_source.txt
 # Fabric development run
 fabric/run/
 fabric-1.20.1/run/
+
+# Fabric 26.1.2 development run
+fabric-26.1.2/run/
