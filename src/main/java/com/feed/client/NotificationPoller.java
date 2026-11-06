@@ -17,13 +17,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.HoverEvent;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.InputEvent;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Files;
@@ -35,7 +28,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Toasts for new items; unread badge until markRead(postId). */
-@EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class NotificationPoller {
     private static final int TOAST_H = 28;
     private static final int TOASTED_CAP = 300;
@@ -67,24 +59,21 @@ public final class NotificationPoller {
 
     private NotificationPoller() {}
 
-    @SubscribeEvent
-    public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+    public static void onLogin() {
         load();
         toasts.clear();
         lastPoll = 0L;
         polling = false;
     }
 
-    @SubscribeEvent
-    public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+    public static void onLogout() {
         saveSync();
         toasts.clear();
         // Keep unread in memory after saving: the shutdown hook may save again.
         // A subsequent login reloads the correct owner's inbox.
     }
 
-    @SubscribeEvent
-    public static void onTick(ClientTickEvent.Post event) {
+    public static void onTick() {
         com.feed.client.screen.Theme.sync();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
@@ -195,8 +184,7 @@ public final class NotificationPoller {
         Runtime.getRuntime().addShutdownHook(new Thread(NotificationPoller::saveSync, "feed-notif-save"));
     }
 
-    @SubscribeEvent
-    public static void onHud(RenderGuiEvent.Post event) {
+    public static void onHud(GuiGraphics g) {
         toasts.removeIf(t -> System.currentTimeMillis() - t.shownAt > FeedConfig.toastDurationSeconds() * 1000L);
         if (!FeedConfig.toastNotificationsEnabled()) {
             toasts.clear();
@@ -205,7 +193,6 @@ public final class NotificationPoller {
         if (toasts.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
-        GuiGraphics g = event.getGuiGraphics();
         int sw = g.guiWidth();
         int y = Math.min(FeedConfig.toastOffsetY(), Math.max(0, g.guiHeight() - TOAST_H));
         int shown = 0;
@@ -234,14 +221,13 @@ public final class NotificationPoller {
         }
     }
 
-    @SubscribeEvent
-    public static void onMouseClick(InputEvent.MouseButton.Pre event) {
-        if (!FeedConfig.toastNotificationsEnabled() || event.getAction() != GLFW.GLFW_PRESS || event.getButton() != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-            return;
+    public static boolean onMouseClick(int button, int action) {
+        if (!FeedConfig.toastNotificationsEnabled() || action != GLFW.GLFW_PRESS || button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            return false;
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) {
-            return;
+            return false;
         }
         double mx = guiMouseX(mc);
         double my = guiMouseY(mc);
@@ -250,13 +236,13 @@ public final class NotificationPoller {
             if (checked++ >= FeedConfig.maxVisibleToasts()) break;
             if (System.currentTimeMillis() - t.shownAt > FeedConfig.toastDurationSeconds() * 1000L) continue;
             if (t.h > 0 && mx >= t.x && mx < t.x + t.w && my >= t.y && my < t.y + t.h) {
-                event.setCanceled(true);
                 FeedApiClient.Notif n = t.notif;
                 toasts.remove(t);
                 mc.execute(() -> PostOpener.open(mc, null, n));
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     public static boolean hasUnread() {

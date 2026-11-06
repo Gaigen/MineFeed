@@ -3,15 +3,12 @@ package com.feed.client.screen;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Centered retro panel with a blinking title, used by the account screens. */
-@OnlyIn(Dist.CLIENT)
 public abstract class AccountPanelScreen extends RetroScreen {
 
     protected static final int PAD = 10;

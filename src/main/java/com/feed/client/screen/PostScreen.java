@@ -12,8 +12,6 @@ import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -22,7 +20,6 @@ import java.util.List;
 import java.util.Set;
 
 /** One post page inside the shell: the card, its comments and a reply line at the bottom. */
-@OnlyIn(Dist.CLIENT)
 public class PostScreen extends ShellScreen {
 
     private static final int TOP = 26;

@@ -4,15 +4,12 @@ import com.feed.client.FeedUtil;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Dialog drawn over the dimmed feed screen, with a ✕ in the corner and hand-drawn buttons. */
-@OnlyIn(Dist.CLIENT)
 public abstract class ModalScreen extends RetroScreen {
 
     protected static final int PAD = 10;

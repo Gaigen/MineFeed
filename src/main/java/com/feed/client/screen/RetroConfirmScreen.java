@@ -3,11 +3,8 @@ package com.feed.client.screen;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Yes / cancel dialog in the retro style. */
-@OnlyIn(Dist.CLIENT)
 public class RetroConfirmScreen extends AccountPanelScreen {
 
     private final Screen parent;

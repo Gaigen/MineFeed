@@ -4,14 +4,11 @@ import com.feed.client.FeedUtil;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.HashSet;
 import java.util.Set;
 
 /** Spoilers the player opened in this game session: the texts of a post or comment, and pictures. */
-@OnlyIn(Dist.CLIENT)
 public final class Spoilers {
 
     private static final Set<String> OPEN = new HashSet<>();

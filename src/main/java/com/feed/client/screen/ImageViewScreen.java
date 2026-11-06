@@ -3,11 +3,8 @@ package com.feed.client.screen;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** A post picture over the whole screen. Click or Esc closes. */
-@OnlyIn(Dist.CLIENT)
 public class ImageViewScreen extends Screen {
 
     private final Screen parent;

@@ -5,8 +5,6 @@ import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -18,7 +16,6 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /** Grid of the latest screenshots from the game's screenshots folder; a click picks one. */
-@OnlyIn(Dist.CLIENT)
 public class ScreenshotPickerScreen extends Screen {
 
     private static final int MAX_FILES = 48;

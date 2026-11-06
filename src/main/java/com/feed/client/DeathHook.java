@@ -1,6 +1,5 @@
 package com.feed.client;
 
-import com.feed.Feed;
 import com.feed.client.screen.ComposeScreen;
 import com.feed.client.screen.FeedScreen;
 import com.feed.client.screen.RetroButton;
@@ -8,16 +7,10 @@ import com.feed.data.PostType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.DeathScreen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.ScreenEvent;
 
 /**
  * Opens compose after respawn — a screen over DeathScreen blocks respawn.
  */
-@EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class DeathHook {
 
     private static String pending;
@@ -26,21 +19,13 @@ public final class DeathHook {
     }
 
     private static String deathMessage(DeathScreen screen, Minecraft mc) {
-        try {
-            var f = DeathScreen.class.getDeclaredField("causeOfDeath");
-            f.setAccessible(true);
-            Component cause = (Component) f.get(screen);
-            if (cause != null) {
-                return cause.getString();
-            }
-        } catch (Exception ignored) {
-        }
+        Component cause = ((com.feed.mixin.DeathScreenAccessor) screen).feed$getCauseOfDeath();
+        if (cause != null) return cause.getString();
         return mc.player.getCombatTracker().getDeathMessage().getString();
     }
 
-    @SubscribeEvent
-    public static void onScreenInit(ScreenEvent.Init.Post event) {
-        if (!FeedConfig.deathHookEnabled() || !(event.getScreen() instanceof DeathScreen screen)) {
+    public static void onScreenInit(net.minecraft.client.gui.screens.Screen current, java.util.function.Consumer<net.minecraft.client.gui.components.events.GuiEventListener> addListener) {
+        if (!FeedConfig.deathHookEnabled() || !(current instanceof DeathScreen screen)) {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -52,7 +37,7 @@ public final class DeathHook {
                 mc.level.dimension().location().toString());
         String message = MessageTemplate.render(FeedConfig.deathTemplate(), java.util.Map.of(
                 "message", deathMessage(screen, mc), "player", mc.getUser().getName(), "coords", coords)).strip();
-        event.addListener(new RetroButton(screen.width / 2 - 100, screen.height / 4 + 120, 200, 18,
+        addListener.accept(new RetroButton(screen.width / 2 - 100, screen.height / 4 + 120, 200, 18,
                 Component.translatable("feed.screen.death.post"), b -> {
             pending = message;
             b.setMessage(Component.translatable("feed.screen.death.queued"));
@@ -60,8 +45,7 @@ public final class DeathHook {
         }));
     }
 
-    @SubscribeEvent
-    public static void onClientTick(ClientTickEvent.Post event) {
+    public static void onClientTick() {
         if (pending == null) {
             return;
         }

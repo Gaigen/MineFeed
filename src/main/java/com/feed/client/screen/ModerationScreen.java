@@ -8,8 +8,6 @@ import com.feed.client.ModerationApi;
 import com.feed.client.PostOpener;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,7 +18,6 @@ import java.util.Map;
  * Moderation queue: open reports about posts and comments, grouped, with Open / Delete / Ban / Kick / Dismiss.
  * Server moderators see everything; community owners and mods see their communities.
  */
-@OnlyIn(Dist.CLIENT)
 public class ModerationScreen extends ShellScreen {
 
     private static final int LIST_Y = 24;

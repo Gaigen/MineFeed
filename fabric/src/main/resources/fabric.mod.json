@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "feed",
+  "version": "${version}",
+  "name": "MineFeed",
+  "description": "Global social feed for Minecraft — one timeline for every player. Client-only.",
+  "authors": ["Gaigen"],
+  "license": "GPL-3.0-or-later",
+  "environment": "client",
+  "entrypoints": {"client": ["com.feed.FabricClient"]},
+  "mixins": ["feed.mixins.json", "feed.fabric.mixins.json"],
+  "depends": {"fabricloader": ">=0.18.6", "fabric-api": ">=0.116.17", "minecraft": "=1.21.1", "java": ">=21"}
+}

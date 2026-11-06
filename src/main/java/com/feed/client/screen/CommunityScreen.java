@@ -9,8 +9,6 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -23,7 +21,6 @@ import java.util.concurrent.CompletableFuture;
  * Community page: invite codes, members, join requests and settings for mods;
  * members see the member list and "about" with a leave button.
  */
-@OnlyIn(Dist.CLIENT)
 public class CommunityScreen extends ShellScreen {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM").withZone(ZoneId.systemDefault());

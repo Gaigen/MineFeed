@@ -5,6 +5,7 @@ import com.feed.client.ModKeyMappings;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
@@ -18,6 +19,11 @@ public class Feed {
     public static final String MOD_ID = "feed";
 
     public static final Logger LOG = LoggerFactory.getLogger("Feed");
+
+    public static String clientVersion() {
+        return ModList.get().getModContainerById(MOD_ID)
+                .map(c -> c.getModInfo().getVersion().toString()).orElse("0.0.0");
+    }
 
     public Feed(IEventBus modEventBus, ModContainer modContainer) {
         LOG.info("MineFeed mod constructing");

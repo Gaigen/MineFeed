@@ -11,8 +11,6 @@ import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,7 +21,6 @@ import java.util.Objects;
 /**
  * Main screen: sidebar (feed, notifications, profile, communities) + the feed of the selected space.
  */
-@OnlyIn(Dist.CLIENT)
 public class FeedScreen extends ShellScreen {
 
     private static final int PAGE_SIZE = 20;

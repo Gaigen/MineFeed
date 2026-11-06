@@ -4,11 +4,8 @@ import com.feed.client.ModerationApi;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Report a post or comment: reason chips, optional details, then a short "thanks". */
-@OnlyIn(Dist.CLIENT)
 public class ReportScreen extends ModalScreen {
 
     private static final int LABEL_W = 70;

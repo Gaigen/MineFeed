@@ -2,11 +2,8 @@ package com.feed.client.screen;
 
 import com.feed.client.FeedConfig;
 import com.feed.data.PostType;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Color themes of the MineFeed UI. Stored in feed-client.toml (ui.theme). */
-@OnlyIn(Dist.CLIENT)
 public enum Theme {
     //        id          bg          fg          gray        hover       accent      shadow      error       strong      light
     DARK("dark",         0xFF000000, 0xFFD6D6D6, 0xFF8A8A8A, 0xFF1C1C1C, 0xFFFFFF55, 0xFF2E2E2E, 0xFFFF5555, 0xFFFFFFFF, false),

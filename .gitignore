@@ -31,3 +31,6 @@ logs/
 docs/
 feed_source.txt
 docs/feed_source.txt
+
+# Fabric development run
+fabric/run/

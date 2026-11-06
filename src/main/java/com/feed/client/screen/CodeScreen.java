@@ -4,13 +4,10 @@ import com.feed.client.CommunityApi;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.Locale;
 
 /** New / edit invite code: own text, note, uses, lifetime, approval; then "code created" with copy. */
-@OnlyIn(Dist.CLIENT)
 public class CodeScreen extends ModalScreen {
 
     private static final int[] USES = {1, 5, 10, 25, 0};

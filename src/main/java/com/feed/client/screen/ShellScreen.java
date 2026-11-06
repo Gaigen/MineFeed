@@ -10,8 +10,6 @@ import com.feed.client.account.UpdateChecker;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,7 +18,6 @@ import java.util.List;
  * Every main page of MineFeed (feed, post, notifications, profile, themes) lives inside this shell:
  * the sidebar on the left stays put and the page is drawn in a centered column on the right.
  */
-@OnlyIn(Dist.CLIENT)
 public abstract class ShellScreen extends RetroScreen {
 
     protected static final int TITLE_Y = 8;

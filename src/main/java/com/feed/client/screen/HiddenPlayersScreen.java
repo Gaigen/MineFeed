@@ -4,15 +4,12 @@ import com.feed.client.FeedUtil;
 import com.feed.client.HiddenPlayers;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /** List of players I hid, with "Show" for each. */
-@OnlyIn(Dist.CLIENT)
 public class HiddenPlayersScreen extends ModalScreen {
 
     private static final int ROW = 18;

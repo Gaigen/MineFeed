@@ -3,11 +3,8 @@ package com.feed.client.screen;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Themes page: every theme as a mini preview in its own colors, plus the GUI scale. A click applies and saves. */
-@OnlyIn(Dist.CLIENT)
 public class ThemeScreen extends ShellScreen {
 
     private static final int TOP = 24;

@@ -8,15 +8,12 @@ import com.feed.client.account.TagRules;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** Account settings page: nick, @tag, avatar, Discord, recovery code / sign in / sign out — one row each. */
-@OnlyIn(Dist.CLIENT)
 public class ProfileScreen extends ShellScreen {
 
     private static final int BTN_H = AccountUi.FIELD_H;

@@ -6,13 +6,10 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.Locale;
 
 /** Sign in on this PC with a recovery code. Signs out every other PC and issues a new code. */
-@OnlyIn(Dist.CLIENT)
 public class RecoverScreen extends AccountPanelScreen {
 
     private static final int CODE_CHARS = 20;

@@ -9,11 +9,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Application for an own community; reviewed by server staff in Discord. */
-@OnlyIn(Dist.CLIENT)
 public class ApplyScreen extends ModalScreen {
 
     private static final int ABOUT_H = 44;

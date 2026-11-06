@@ -6,7 +6,9 @@
   "client": [
     "EditBoxMixin",
     "MultiLineEditBoxMixin",
-    "MultiLineEditBoxAccessor"
+    "MultiLineEditBoxAccessor",
+    "ContainerScreenAccessor",
+    "DeathScreenAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

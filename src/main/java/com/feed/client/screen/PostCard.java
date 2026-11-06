@@ -7,13 +7,10 @@ import com.feed.data.Post;
 import com.feed.data.PostType;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.List;
 
 /** A post card, shared by the feed and the post screen: head, name @tag, time · space, type chip, text, picture, reactions. */
-@OnlyIn(Dist.CLIENT)
 public final class PostCard {
 
     public static final int PAD = 6;

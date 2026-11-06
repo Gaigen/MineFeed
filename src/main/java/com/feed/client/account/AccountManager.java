@@ -3,8 +3,6 @@ package com.feed.client.account;
 import com.feed.Feed;
 import com.feed.client.FeedHttp;
 import net.minecraft.client.Minecraft;
-import net.neoforged.fml.ModList;
-import net.neoforged.fml.loading.FMLPaths;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -26,7 +24,7 @@ public final class AccountManager {
     private volatile boolean sessionLost;
 
     private AccountManager() {
-        this.store = new AccountStore(AccountStore.defaultFile(FMLPaths.GAMEDIR.get()));
+        this.store = new AccountStore(AccountStore.defaultFile(Minecraft.getInstance().gameDirectory.toPath()));
         this.api = new AccountApi(FeedHttp.CLIENT, AccountApi.baseFromEnvironment(), clientVersion(), this::key);
         AccountApi.language = () -> {
             try {
@@ -38,9 +36,7 @@ public final class AccountManager {
     }
 
     public static String clientVersion() {
-        return ModList.get().getModContainerById(Feed.MOD_ID)
-                .map(c -> c.getModInfo().getVersion().toString())
-                .orElse("0.0.0");
+        return Feed.clientVersion();
     }
 
     public AccountApi api() {

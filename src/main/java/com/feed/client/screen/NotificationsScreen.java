@@ -8,8 +8,6 @@ import com.feed.client.NotificationPoller;
 import com.feed.client.PostOpener;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 
 /** Notifications page: replies, mentions, reactions and community news; unread ones have a yellow frame. */
-@OnlyIn(Dist.CLIENT)
 public class NotificationsScreen extends ShellScreen {
 
     private static final int TABS_Y = 22;

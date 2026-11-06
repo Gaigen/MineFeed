@@ -7,8 +7,6 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +15,6 @@ import java.util.List;
  * Search: players by nick or @tag and #hashtags of the current space; results update while typing.
  * With an empty query it shows the popular tags. Enter opens the first result.
  */
-@OnlyIn(Dist.CLIENT)
 public class SearchScreen extends ModalScreen {
 
     private static final int ROW_H = 20;

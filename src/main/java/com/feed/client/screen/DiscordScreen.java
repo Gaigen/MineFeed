@@ -7,14 +7,11 @@ import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /**
  * Discord link (from the profile) or Discord sign-in (from the welcome screen).
  * Opens the browser, then polls the server until the user is back.
  */
-@OnlyIn(Dist.CLIENT)
 public class DiscordScreen extends AccountPanelScreen {
 
     private static final long POLL_MS = 2000;

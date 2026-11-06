@@ -4,8 +4,6 @@ import com.feed.client.FeedApiClient;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +15,6 @@ import java.util.regex.Pattern;
  * @player and #hashtag suggestions while typing: watches the word before the cursor,
  * asks the server (debounced) and draws a row of chips; Tab or a click puts the choice in.
  */
-@OnlyIn(Dist.CLIENT)
 public final class Suggest {
 
     /** Text + cursor of some field, and a way to replace a range of it. */

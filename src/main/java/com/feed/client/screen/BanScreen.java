@@ -4,13 +4,10 @@ import com.feed.client.ModerationApi;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.function.Consumer;
 
 /** Server ban: reason, length (1 / 7 / 30 days / forever), optionally delete the reported message. */
-@OnlyIn(Dist.CLIENT)
 public class BanScreen extends ModalScreen {
 
     private static final int LABEL_W = 70;

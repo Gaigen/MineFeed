@@ -4,11 +4,8 @@ import com.feed.client.PostImages;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Draws a post picture scaled into a box, with a placeholder while it loads. */
-@OnlyIn(Dist.CLIENT)
 public final class ImageBox {
 
     private ImageBox() {}

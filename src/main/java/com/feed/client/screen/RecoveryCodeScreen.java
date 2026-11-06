@@ -3,11 +3,8 @@ package com.feed.client.screen;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** Shows a freshly issued recovery code once. The code is never written to disk or logs. */
-@OnlyIn(Dist.CLIENT)
 public class RecoveryCodeScreen extends AccountPanelScreen {
 
     private static final long DONE_DELAY_MS = 2500;

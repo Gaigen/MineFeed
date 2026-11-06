@@ -4,13 +4,10 @@ import com.feed.client.CommunityApi;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.Locale;
 
 /** "Join a community": one field for the invite code. */
-@OnlyIn(Dist.CLIENT)
 public class JoinCodeScreen extends ModalScreen {
 
     private EditBox code;

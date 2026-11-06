@@ -9,8 +9,6 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
@@ -20,7 +18,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /** Compose panel with type selector, coordinates, poll and screenshot; also edits own posts. Ctrl+Enter submits. */
-@OnlyIn(Dist.CLIENT)
 public class ComposeScreen extends Screen {
 
     private static final int MAX = 500;

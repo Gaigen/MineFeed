@@ -1,14 +1,11 @@
 package com.feed.client.screen;
 
 import net.minecraft.client.gui.GuiGraphics;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 import java.util.HashMap;
 import java.util.Map;
 
 /** Tiny 7x7 pixel icons for the sidebar and buttons (drawn with fills, recolored freely). */
-@OnlyIn(Dist.CLIENT)
 public final class PixelIcon {
 
     public static final int SIZE = 7;

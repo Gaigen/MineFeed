@@ -6,11 +6,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
 /** First launch: pick a nick and a unique @tag, or sign in with a recovery code. */
-@OnlyIn(Dist.CLIENT)
 public class WelcomeScreen extends AccountPanelScreen {
 
     private final Screen next;
