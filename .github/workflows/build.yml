@@ -2,7 +2,8 @@ name: Build MineFeed
 
 on:
   push:
-    branches: ['**']
+    # Pull requests already build their source branch; avoid duplicate CI runs.
+    branches: ['master']
     tags: ['v[0-9]*']
   pull_request:
   workflow_dispatch:
