@@ -1,6 +1,6 @@
 # MineFeed build automation
 
-Every branch push, every pull request, and every pushed `v...` tag
+Every push to `master`, every pull request, and every pushed `v...` tag
 runs the checks and builds six client-only jars in GitHub Actions. A manual workflow
 run is also available after the workflow exists on the repository's default branch.
 Each job uploads a downloadable artifact for testing. A successful build alone is
@@ -13,8 +13,7 @@ announcer. Never upload sources/dev-only jars as player downloads.
 
 ## Stable release preparation
 
-The project currently plans to promote the existing V2 Worker, rather than
-replacing the incompatible V1 API. `ci/release-api.txt` records the chosen V2
+The existing V2 Worker is used for production separately from the incompatible V1 API. `ci/release-api.txt` records the chosen V2
 HTTPS origin, and the release preflight checks it against all four client
 implementations. Its name contains `dev`, but renaming it would break existing
 clients; the name alone does not decide whether it is suitable for production.
