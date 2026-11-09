@@ -1,5 +1,6 @@
-# MineFeed API v2 — TEST environment. Production config will be added separately.
-name = "minefeed-dev"
+# Staging configuration only; provision this Worker and its secrets before use.
+# Production uses wrangler.production.toml and the existing minefeed-dev URL.
+name = "minefeed-v2-staging"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true

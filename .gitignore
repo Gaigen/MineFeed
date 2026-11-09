@@ -47,3 +47,5 @@ neoforge-26.1.2/run/
 # Python build tooling
 __pycache__/
 *.pyc
+# Wrangler local state
+.wrangler/
