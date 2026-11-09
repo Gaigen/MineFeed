@@ -3,7 +3,7 @@ loaderVersion="[4,)"
 license="GPL-3.0-or-later"
 [[mods]]
 modId="feed"
-version="0.2.0-dev19-neoforge-26.1.2-wip"
+version="${modVersion}"
 displayName="MineFeed"
 description='''Global social feed for Minecraft. Client-only.'''
 authors="Gaigen"

@@ -1,7 +1,7 @@
 plugins { id 'fabric-loom' version '1.14.10' }
 def modProperties = new Properties()
 file('../gradle.properties').withInputStream { modProperties.load(it) }
-version = modProperties.getProperty('mod_version') + '-fabric-wip'
+version = modProperties.getProperty('mod_version')
 group = 'com.feed'
 base { archivesName = 'feed-fabric-1.20.1' }
 repositories { mavenCentral() }

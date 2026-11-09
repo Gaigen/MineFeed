@@ -43,3 +43,7 @@ fabric-26.1.2/run/
 neoforge-1.20.1/run/
 neoforge-1.20.1/runs/
 neoforge-26.1.2/run/
+
+# Python build tooling
+__pycache__/
+*.pyc

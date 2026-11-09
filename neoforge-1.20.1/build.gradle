@@ -1,5 +1,7 @@
 plugins { id 'java-library'; id 'net.neoforged.moddev.legacyforge' version '2.0.148' }
-version = '0.2.0-dev19-neoforge-1.20.1-wip'
+def modProperties = new Properties()
+file('../gradle.properties').withInputStream { modProperties.load(it) }
+version = modProperties.getProperty('mod_version')
 group = 'com.feed'
 base { archivesName = 'minefeed-neoforge-1.20.1' }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -9,7 +11,11 @@ legacyForge {
  mods { feed { sourceSet(sourceSets.main) } }
 }
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 17 }
-processResources { exclude 'assets/feed/font/OFL.txt' }
+processResources {
+ exclude 'assets/feed/font/OFL.txt'
+ inputs.property 'modVersion', project.version
+ filesMatching('META-INF/*.toml') { expand modVersion: project.version }
+}
 jar { manifest { attributes 'MixinConfigs': 'feed.neo.mixins.json' }; from('../LICENSE') { rename { 'LICENSE_MineFeed' } }; from('../src/main/resources/assets/feed/font/OFL.txt') { rename { 'FONT_LICENSE_OFL.txt' } } }
 dependencies { annotationProcessor 'org.spongepowered:mixin:0.8.5:processor' }
 mixin { add sourceSets.main, 'feed.neo.refmap.json'; config 'feed.neo.mixins.json' }

@@ -1,5 +1,7 @@
 plugins { id 'net.fabricmc.fabric-loom' version '1.19.3' }
-version = '0.2.0-dev19-fabric-26.1.2-wip'
+def modProperties = new Properties()
+file('../gradle.properties').withInputStream { modProperties.load(it) }
+version = modProperties.getProperty('mod_version')
 group = 'com.feed'
 base { archivesName = 'feed-fabric-26.1.2' }
 repositories { mavenCentral() }
