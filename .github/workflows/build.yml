@@ -37,6 +37,8 @@ jobs:
         run: bash tests/run-template-tests.sh
       - name: Test server
         run: node --test server/test/*.test.mjs
+      - name: Test V1 update notice
+        run: node --test proxy/test/*.test.mjs
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '18'

@@ -85,6 +85,14 @@ export default {
         return json({ error: "unauthorized" }, 401);
       }
 
+      // Reserved virtual, read-only announcement. Off until both vars are set.
+      const notice = v1UpdateNotice(env);
+      if (notice && request.method === "GET" && p === "/v1/posts/0") {
+        return json({ post: notice });
+      }
+      if (notice && request.method === "GET" && p === "/v1/posts/0/comments") {
+        return jsonEtag({ comments: [], nextBefore: null }, request);
+      }
       if (p === "/v1/feed" && request.method === "GET") {
         return await handleFeed(env, url, request);
       }
@@ -413,6 +421,19 @@ async function buildPosts(env, ids, msgCountById) {
 
 // --- feed ---
 
+// Discord snowflake IDs are positive; 0 is reserved for this virtual post.
+// Keep the timestamp fixed so clients can use ETags without unnecessary polling.
+function v1UpdateNotice(env) {
+  const text = String(env.V1_UPDATE_NOTICE || "").trim();
+  const date = String(env.V1_UPDATE_PUBLISHED_AT || "").trim();
+  if (!text || !date || Number.isNaN(Date.parse(date))) return null;
+  return {
+    id: "0", type: "talk", author: "MineFeed", uuid: "", text: text.slice(0, 500),
+    tags: [], solved: true, createdAt: date, commentCount: 0,
+    reactions: { fire: 0, zzz: 0 }, myReaction: null,
+  };
+}
+
 async function getThreads(env) {
   if (mem.threads && Date.now() - mem.threads.at < THREADS_TTL) return mem.threads.list;
   let data;
@@ -501,6 +522,8 @@ async function handleFeed(env, url, request) {
     posts: personalize(snap.posts.slice(0, limit), uuid),
     nextCursor: snap.nextCursor,
   };
+  const notice = v1UpdateNotice(env);
+  if (notice) result.posts.unshift(notice);
   return jsonEtag(result, request);
 }
 
