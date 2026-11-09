@@ -1,6 +1,6 @@
 // Release announcer: polls GitHub, Modrinth and CurseForge for new versions of our mods and posts
 // one message per version into the announcements channel, pinging that mod's role.
-// Stateless: the channel itself is the memory (footer "<Name> <version>"), plus RELEASES_SINCE.
+// Release state and message IDs are persisted by the updating announcer.
 
 export const PROJECTS = [
   {
@@ -80,10 +80,11 @@ export function group(entries) {
   const map = new Map();
   for (const e of entries) {
     const k = `${e.project}@${e.version}`;
-    const g = map.get(k) || { project: e.project, version: e.version, mc: [], loaders: [], urls: {}, published: e.published, notes: [] };
+    const g = map.get(k) || { project: e.project, version: e.version, mc: [], loaders: [], urls: {}, allUrls: {}, published: e.published, notes: [] };
     g.mc = uniq(g.mc.concat(e.mc));
     g.loaders = uniq(g.loaders.concat(e.loaders));
     if (!g.urls[e.source]) g.urls[e.source] = e.url;
+    g.allUrls[e.source] = uniq((g.allUrls[e.source] || []).concat(e.url));
     if (Date.parse(e.published) < Date.parse(g.published)) g.published = e.published;
     if (e.source === "github") g.notes.push({ body: e.body, compare: e.compare });
     map.set(k, g);
@@ -188,9 +189,9 @@ function clip(s, max) {
 export function buildMessage(project, g, { roleId, text, fallback = "Fixes and improvements.", headline = true }) {
   const link = (label, url) => ({ type: 2, style: 5, label, url, emoji: { name: "⬇️" } });
   const buttons = [];
-  if (g.urls.modrinth) buttons.push(link("Modrinth", g.urls.modrinth));
-  if (g.urls.curseforge) buttons.push(link("CurseForge", g.urls.curseforge));
-  if (g.urls.github) buttons.push(link("GitHub", g.urls.github));
+  if (g.urls.modrinth) buttons.push(link("Modrinth", g.allUrls?.modrinth?.length > 1 ? project.pages.Modrinth : g.urls.modrinth));
+  if (g.urls.curseforge) buttons.push(link("CurseForge", g.allUrls?.curseforge?.length > 1 ? project.pages.CurseForge : g.urls.curseforge));
+  if (g.urls.github) buttons.push(link("GitHub", g.allUrls?.github?.length > 1 ? `https://github.com/${project.github}/releases` : g.urls.github));
   const fields = [];
   const mc = (g.mc.length ? g.mc : project.mc).slice().sort(versionSort);
   const loaders = g.loaders.length ? g.loaders : project.loaders;
@@ -200,72 +201,10 @@ export function buildMessage(project, g, { roleId, text, fallback = "Fixes and i
     content: roleId ? `<@&${roleId}>` : undefined,
     allowedMentions: { parse: [], roles: roleId ? [roleId] : [] },
     embeds: [{
-      title: headline ? `${project.name} ${g.version} is out` : `${project.name} ${g.version}`, url: g.urls.github || g.urls.modrinth || g.urls.curseforge,
+      title: headline ? `${project.name} ${g.version} is out` : `${project.name} ${g.version}`, url: buttons.find(b => b.label === "GitHub")?.url || buttons[0]?.url,
       color: project.color, description: text || fallback || undefined, fields,
       footer: { text: footerOf(project, g.version) }, timestamp: new Date(Date.parse(g.published)).toISOString(),
     }],
     components: buttons.length ? [{ type: 1, components: buttons.slice(0, 5) }] : [],
-  };
-}
-
-/**
- * Poller. `fetchJson(url, headers)` -> {status, data, etag}.
- * targets: [{name, channel: {send, recentFooters}, since, projects?: [keys], ping?, fallback?}] —
- * e.g. the announcements channel (ping, only new) and per-mod release history channels (all versions, no ping).
- * Each source failing alone just skips that source for this round.
- */
-export function makeAnnouncer({ fetchJson, targets, roles = {}, log = console, projects = PROJECTS, now = () => Date.now() }) {
-  const etags = new Map();
-  const cache = new Map();
-  const texts = new Map();
-  async function get(url) {
-    const r = await fetchJson(url, etags.has(url) ? { "If-None-Match": etags.get(url) } : {});
-    if (r.status === 304) return cache.get(url);
-    if (r.status !== 200) throw new Error(`${url} -> ${r.status}`);
-    if (r.etag) etags.set(url, r.etag);
-    cache.set(url, r.data);
-    return r.data;
-  }
-  async function collect(p) {
-    const jobs = [];
-    if (p.github) jobs.push(get(`https://api.github.com/repos/${p.github}/releases?per_page=50`).then((d) => fromGithub(p, d)));
-    if (p.modrinth) jobs.push(get(`https://api.modrinth.com/v2/project/${p.modrinth}/version`).then((d) => fromModrinth(p, d)));
-    if (p.curseforge) jobs.push(get(`https://api.cfwidget.com/minecraft/mc-mods/${p.curseforge}`).then((d) => fromCurseforge(p, d)));
-    const res = await Promise.allSettled(jobs);
-    for (const r of res) if (r.status === "rejected" && !/-> 404$/.test(r.reason?.message || "")) log.warn("releases:", r.reason?.message);
-    return res.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
-  }
-  async function textFor(p, g) {
-    const key = footerOf(p, g.version);
-    if (texts.has(key)) return texts.get(key);
-    const c = g.notes.find((n) => n.compare)?.compare;
-    let commits = [];
-    if (c && p.github) {
-      try {
-        const d = await get(`https://api.github.com/repos/${p.github}/compare/${c.base}...${c.head}`);
-        commits = (d.commits || []).map((x) => x.commit?.message || "");
-      } catch (e) { log.warn("releases: compare", e.message); return ""; }
-    }
-    const text = changelog(g.notes, commits, g.version);
-    texts.set(key, text);
-    return text;
-  }
-  return async function tick() {
-    const groups = group((await Promise.all(projects.map(collect))).flat());
-    const sent = [];
-    for (const t of targets) {
-      const mine = t.projects ? groups.filter((g) => t.projects.includes(g.project)) : groups;
-      if (!pickNew(mine, { since: t.since, now: now(), posted: new Set() }).length) continue;
-      const posted = await t.channel.recentFooters();
-      for (const g of pickNew(mine, { since: t.since, now: now(), posted })) {
-        const p = projects.find((x) => x.key === g.project);
-        const msg = buildMessage(p, g, { roleId: t.ping ? roles[p.key] : null, text: await textFor(p, g), fallback: t.fallback ?? null, headline: !!t.ping });
-        await t.channel.send(msg);
-        posted.add(footerOf(p, g.version));
-        sent.push(`${t.name}: ${footerOf(p, g.version)}`);
-        log.log(`posted ${footerOf(p, g.version)} to ${t.name}`);
-      }
-    }
-    return sent;
   };
 }

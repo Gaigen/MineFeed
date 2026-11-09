@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PROJECTS, parseJar, cleanVersion, fromGithub, fromModrinth, fromCurseforge, group, pickNew, changelog, buildMessage, makeAnnouncer, footerOf, mcRange, versionSort } from "../releases.js";
+import { PROJECTS, parseJar, cleanVersion, fromGithub, fromModrinth, fromCurseforge, group, pickNew, changelog, buildMessage, footerOf, mcRange, versionSort } from "../releases.js";
 
 const RC = PROJECTS.find((p) => p.key === "retroconsole");
 const MF = PROJECTS.find((p) => p.key === "minefeed");
@@ -88,58 +88,6 @@ test("message: ping, buttons, fields, footer", () => {
   assert.equal(plain.content, undefined);
   assert.equal(plain.embeds[0].description, "Fixes and improvements.");
   assert.deepEqual(plain.embeds[0].fields.map((f) => f.value), ["1.21.1", "NeoForge"]);
-});
-
-test("announcer posts a new version once and survives a broken source", async () => {
-  const now = Date.parse("2026-11-06T00:00:00Z");
-  const sent = [];
-  const footers = new Set();
-  const calls = [];
-  const fetchJson = async (url, headers) => {
-    calls.push([url, headers]);
-    if (url.includes("cfwidget")) return { status: 500, data: null };
-    if (url.includes("modrinth")) return { status: 404, data: null };
-    if (url.includes("Gaigen/MineFeed")) return { status: 200, data: [], etag: '"mf"' };
-    if (url.includes("/compare/")) return { status: 200, data: { commits: [{ commit: { message: "Release 0.3.4: saves sync" } }] } };
-    if (headers["If-None-Match"]) return { status: 304, data: null };
-    return { status: 200, etag: '"rc"', data: [gh("v0.3.4-mc1.21.1", "2026-11-05T20:00:00Z", ["retroconsole-0.3.4+1.21.1-neoforge.jar"], "**Full Changelog**: https://github.com/x/compare/v0.3.3-mc1.21.1...v0.3.4-mc1.21.1")] };
-  };
-  const channel = { send: async (m) => { sent.push(m); footers.add(m.embeds[0].footer.text); }, recentFooters: async () => new Set(footers) };
-  const quiet = { log() {}, warn() {}, error() {} };
-  const tick = makeAnnouncer({ fetchJson, targets: [{ name: "a", channel, ping: true, since: Date.parse("2026-11-05T00:00:00Z"), fallback: "Fixes and improvements." }],
-    roles: { retroconsole: "7" }, now: () => now, log: quiet });
-  assert.deepEqual(await tick(), ["a: RetroConsole 0.3.4"]);
-  assert.equal(sent[0].content, "<@&7>");
-  assert.equal(sent[0].embeds[0].description, "**Saves sync**");
-  assert.deepEqual(await tick(), []);
-  assert.equal(sent.length, 1);
-  assert.ok(calls.some(([u, h]) => u.includes("retroconsole/releases") && h["If-None-Match"] === '"rc"'), "second round uses the ETag");
-});
-
-test("history channel gets every version of its mod in order, without a ping", async () => {
-  const now = Date.parse("2026-11-06T00:00:00Z");
-  const fetchJson = async (url) => {
-    if (url.includes("retroconsole/releases")) return { status: 200, data: [
-      gh("v0.3.3-mc1.21.1", "2026-11-02T19:32:18Z", ["retroconsole-0.3.3+1.21.1-neoforge.jar"]),
-      gh("v0.2.6", "2026-10-25T10:00:00Z", ["retroconsole-0.2.6.jar"]),
-      gh("v0.2.5", "2026-10-25T11:00:00Z", ["retroconsole-0.2.5.jar"]),
-    ] };
-    if (url.includes("MineFeed/releases")) return { status: 200, data: [gh("v0.2.0", "2026-11-01T00:00:00Z", ["feed-0.2.0.jar"])] };
-    return { status: 404, data: null };
-  };
-  const box = () => { const sent = []; return { sent, channel: { send: async (m) => { sent.push(m); }, recentFooters: async () => new Set(sent.map((m) => m.embeds[0].footer.text)) } }; };
-  const rc = box(), ann = box();
-  const quiet = { log() {}, warn() {}, error() {} };
-  const tick = makeAnnouncer({ fetchJson, roles: { retroconsole: "7", minefeed: "8" }, now: () => now, log: quiet, targets: [
-    { name: "announcements", channel: ann.channel, ping: true, since: Date.parse("2026-11-05T00:00:00Z") },
-    { name: "rc", channel: rc.channel, projects: ["retroconsole"], since: 0 },
-  ] });
-  await tick();
-  assert.deepEqual(rc.sent.map((m) => m.embeds[0].footer.text), ["RetroConsole 0.2.5", "RetroConsole 0.2.6", "RetroConsole 0.3.3"]);
-  assert.ok(rc.sent.every((m) => m.content === undefined && m.embeds[0].description === undefined));
-  assert.equal(rc.sent[0].embeds[0].title, "RetroConsole 0.2.5");
-  assert.equal(ann.sent.length, 0, "old versions are not announced");
-  assert.deepEqual(await tick(), []);
 });
 
 test("version order and Minecraft ranges", () => {

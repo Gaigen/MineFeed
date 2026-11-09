@@ -15,6 +15,9 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadOnlyPaths=/opt/minefeed-bot
+# A dedicated writable directory survives restarts and deployments.
+StateDirectory=minefeed-bot
+StateDirectoryMode=0750
 MemoryMax=256M
 
 [Install]

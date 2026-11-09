@@ -1,12 +1,16 @@
 // MineFeed gateway relay. Keeps one Discord Gateway connection and forwards feed-forum events
 // (comments written in Discord, deletions, tag changes, moderator role) to the Worker in batches.
 // Players never talk to this process.
-import { Client, GatewayIntentBits, Partials, ChannelType } from "discord.js";
+import { Client, GatewayIntentBits, Partials, ChannelType, PermissionFlagsBits } from "discord.js";
 import { readFileSync, existsSync } from "node:fs";
 import { Relay } from "./relay.js";
 import { makeFilter } from "./filter.js";
 import { COMMAND, makeApplications, workerClient } from "./apply.js";
-import { makeAnnouncer } from "./releases.js";
+import { PROJECTS } from "./releases.js";
+import { makeUpdatingAnnouncer } from "./release-updater.js";
+import { fileReleaseState } from "./release-state.js";
+import { releaseEditPayload } from "./release-message.js";
+import { join } from "node:path";
 import { makePings, parseRoles } from "./pings.js";
 
 loadEnvFile(new URL("./.env", import.meta.url).pathname);
@@ -83,20 +87,37 @@ const releaseChannel = (id, crosspost) => ({
     if (crosspost && ch.type === ChannelType.GuildAnnouncement) await m.crosspost().catch((e) => console.warn("crosspost failed:", e.message));
     return m;
   },
-  async recentFooters() {
+  async recentMessages() {
     const ch = await client.channels.fetch(id);
+    const permissions = ch.permissionsFor(client.user);
+    if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory])) {
+      throw new Error(`releases: missing View Channel or Read Message History in ${id}`);
+    }
     const msgs = await ch.messages.fetch({ limit: 100 });
-    return new Set([...msgs.values()].filter((m) => m.author.id === client.user.id).flatMap((m) => m.embeds.map((e) => e.footer?.text)).filter(Boolean));
+    return [...msgs.values()].filter(m => m.author.id === client.user.id).flatMap(m => m.embeds.map(e => ({
+      id: m.id, footer: e.footer?.text, createdTimestamp: m.createdTimestamp,
+      minecraft: e.fields.find(f => f.name === "Minecraft")?.value || "",
+      loaders: e.fields.find(f => f.name === "Loaders")?.value || "",
+    })));
+  },
+  async edit(messageId, desired) {
+    const ch = await client.channels.fetch(id);
+    const m = await ch.messages.fetch(messageId);
+    if (m.author.id !== client.user.id || !m.embeds.length) {
+      const e = new Error("release message is not editable by this bot"); e.code = 10008; throw e;
+    }
+    await m.edit(releaseEditPayload(m, desired));
   },
 });
 const targets = [];
 if (ANNOUNCE_CHANNEL_ID) {
-  targets.push({ name: "announcements", channel: releaseChannel(ANNOUNCE_CHANNEL_ID, true), ping: true,
-    since: Date.parse(process.env.RELEASES_SINCE || "") || Date.now(), fallback: "Fixes and improvements." });
+  targets.push({ id: ANNOUNCE_CHANNEL_ID, name: "announcements", channel: releaseChannel(ANNOUNCE_CHANNEL_ID, true), ping: true,
+    since: Date.parse(process.env.RELEASES_SINCE || "") || Date.now(), dynamicSince: !Number.isFinite(Date.parse(process.env.RELEASES_SINCE || "")), fallback: "Fixes and improvements." });
 }
-for (const [key, id] of Object.entries(releaseChannels)) targets.push({ name: `${key}-releases`, channel: releaseChannel(id, false), projects: [key], since: 0 });
+for (const [key, id] of Object.entries(releaseChannels)) targets.push({ id, name: `${key}-releases`, channel: releaseChannel(id, false), projects: [key], since: 0, history: true });
 if (targets.length) {
-  const tick = makeAnnouncer({ fetchJson, targets, roles: pingRoles });
+  const statePath = process.env.RELEASE_STATE_PATH || join(process.env.STATE_DIRECTORY || ".", "releases-state.json");
+  const tick = makeUpdatingAnnouncer({ fetchJson, targets, roles: pingRoles, projects: PROJECTS, stateStore: fileReleaseState(statePath) });
   const run = () => { if (client.isReady()) tick().catch((e) => console.warn("releases:", e.message)); };
   setTimeout(run, 60_000);
   setInterval(run, 10 * 60_000);
