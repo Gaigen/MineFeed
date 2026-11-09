@@ -25,6 +25,16 @@ test("filter keeps feed-forum events only", () => {
   assert.equal(filter("TYPING_START", { guild_id: "g", channel_id: "th" }), null);
 });
 
+test("explicit feed forums do not include unrelated forums in the same category", () => {
+  const channels = { main: { type: 4 }, feed: { type: 15, parentId: "main" }, help: { type: 15, parentId: "main" }, feedThread: { type: 11, parentId: "feed" }, helpThread: { type: 11, parentId: "help" } };
+  const f = makeFilter({ guildId: "g", categories: [], forums: ["feed"], channels: (id) => channels[id] });
+  const msg = (channel_id) => ({ guild_id: "g", id: "1", channel_id, content: "hi", author: { id: "u" } });
+  assert.ok(f("MESSAGE_CREATE", msg("feedThread")));
+  assert.equal(f("MESSAGE_CREATE", msg("helpThread")), null);
+  assert.ok(f("THREAD_DELETE", { guild_id: "g", id: "x", parent_id: "feed" }));
+  assert.equal(f("THREAD_DELETE", { guild_id: "g", id: "x", parent_id: "help" }), null);
+});
+
 test("relay batches, retries and keeps order", async () => {
   const sent = [];
   let fail = 1;

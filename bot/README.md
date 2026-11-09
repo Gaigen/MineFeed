@@ -34,7 +34,7 @@ Memory: ~60–90 MB. Traffic: tiny.
 ## Settings
 
 See `.env.example`. `BOT_SECRET` must equal the Worker secret of the same name.
-`FEED_CATEGORY_IDS` lists the Discord categories that hold MineFeed forums (main feed + communities).
+`FEED_CATEGORY_IDS` lists the categories that hold private community forums. `FEED_FORUM_IDS` lists the two main feed forums explicitly; this keeps unrelated help and bug forums in the same category out of the relay.
 
 ## Community applications
 

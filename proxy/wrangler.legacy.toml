@@ -1,0 +1,15 @@
+# V1 compatibility notice only. APP_TOKEN is an existing Cloudflare secret.
+name = "feed-proxy"
+main = "legacy-notice.js"
+compatibility_date = "2026-07-11"
+workers_dev = true
+preview_urls = false
+
+[vars]
+V1_UPDATE_NOTICE = "MineFeed V1 is no longer supported. MineFeed V2 is coming: github.com/Gaigen/MineFeed/releases — update when available."
+V1_UPDATE_PUBLISHED_AT = "2026-11-09T00:00:00Z"
+
+# No D1 binding and no cron: the V1 Worker serves only the update notice.
+
+[triggers]
+crons = []

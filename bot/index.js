@@ -30,7 +30,7 @@ const channels = (id) => {
   if (!c) return undefined;
   return { type: c.type, parentId: c.parentId, name: c.name, appliedTags: c.appliedTags };
 };
-const filter = makeFilter({ guildId: GUILD_ID, categories: process.env.FEED_CATEGORY_IDS.split(",").map((s) => s.trim()), channels });
+const filter = makeFilter({ guildId: GUILD_ID, categories: process.env.FEED_CATEGORY_IDS.split(",").map((s) => s.trim()).filter(Boolean), forums: (process.env.FEED_FORUM_IDS || "").split(",").map((s) => s.trim()).filter(Boolean), channels });
 
 const onInteraction = makeApplications({ call: workerClient({ url: WORKER_URL, secret: BOT_SECRET }), modRoleId: MOD_ROLE_ID });
 const pingRoles = parseRoles(process.env.PING_ROLES);
