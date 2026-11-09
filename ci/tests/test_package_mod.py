@@ -30,12 +30,26 @@ class JarTests(unittest.TestCase):
             self.assertFalse(inspect_jar(path, 'fabric', '1.20.1', version()))
 
 class ReleaseGuardTests(unittest.TestCase):
-    def test_tag_and_development_api_block_release(self):
+    def test_tag_and_approved_api(self):
         import check_release
         from unittest.mock import patch
-        with patch.object(check_release, 'version', return_value='0.2.0-dev19'):
-            with self.assertRaisesRegex(ValueError, 'stable'): check_release.check('v0.2.0')
-        with patch.object(check_release, 'version', return_value='0.2.0'):
-            with self.assertRaisesRegex(ValueError, 'development API'): check_release.check('v0.2.0')
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / 'ci').mkdir()
+            (root / 'ci/release-api.txt').write_text('https://example.workers.dev\n')
+            for name in check_release.API_SOURCES:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('public static final String DEFAULT_BASE = "https:" + "//example.workers.dev";')
+            with patch.object(check_release, 'ROOT', root):
+                with patch.object(check_release, 'version', return_value='0.2.0-dev19'):
+                    with self.assertRaisesRegex(ValueError, 'stable'): check_release.check('v0.2.0')
+                with patch.object(check_release, 'version', return_value='0.2.0'):
+                    check_release.check('v0.2.0')
+                    with self.assertRaisesRegex(ValueError, 'stable'): check_release.check('v0.3.0')
+                    (root / check_release.API_SOURCES[0]).write_text('public static final String DEFAULT_BASE = "https:" + "//wrong.example";')
+                    with self.assertRaisesRegex(ValueError, 'approved API'): check_release.check('v0.2.0')
+                    (root / 'ci/release-api.txt').write_text('http://example.workers.dev')
+                    with self.assertRaisesRegex(ValueError, 'HTTPS'): check_release.check('v0.2.0')
 
 if __name__ == '__main__': unittest.main()

@@ -11,20 +11,23 @@ internal mod version, loader and Minecraft version, then outputs filenames such 
 `minefeed-0.2.0+1.21.1-fabric.jar`. Those names are understood by the Discord release
 announcer. Never upload sources/dev-only jars as player downloads.
 
-## Stable release (not ready yet)
+## Stable release preparation
 
-The existing client still defaults to the development Worker and `mod_version` is a
-`dev` build. Stable tag builds are intentionally blocked until both are changed. Do
-not use the development feed for players. Deploy and test a separate production
-Worker/D1 and Discord configuration first; see `server/LAUNCH-v2.md`. Set all four
-`AccountApi.DEFAULT_BASE` implementations to the tested production HTTPS endpoint,
-set `mod_version` to a stable version such as `0.2.0`, update `/v2/meta` server
-version settings, and validate each JAR in a real launcher.
+The project currently plans to promote the existing V2 Worker, rather than
+replacing the incompatible V1 API. `ci/release-api.txt` records the chosen V2
+HTTPS origin, and the release preflight checks it against all four client
+implementations. Its name contains `dev`, but renaming it would break existing
+clients; the name alone does not decide whether it is suitable for production.
+
+A passing preflight only checks the version and URL consistency. Before publishing,
+verify the Worker and D1, switch and test its Discord forum configuration, test all
+six JARs in real launchers, review security and limits, and verify bot configuration.
+See `server/LAUNCH-v2.md`. Do not retire V1 until the migration is agreed.
 
 After the preparation changes are merged and CI succeeds:
 
 1. Create and push a matching tag, e.g. `v0.2.0`, on the exact commit to release.
-2. Actions checks the tag/version and rejects the known development endpoint,
+2. Actions checks the tag/version and requires the configured API origin,
    runs tests, builds all six JARs and creates **one GitHub Release draft** only
    if the complete artifact set passes validation. This uses the built-in
    `GITHUB_TOKEN` with `contents: write` only in the release job.
