@@ -1,4 +1,4 @@
-# MineFeed Fabric 1.21.1 (experimental)
+# MineFeed Fabric 1.21.1
 
 This project builds the Minecraft 1.21.1 Fabric port from the shared code in `../src/main` plus Fabric-specific integration in `src/main`. It does not replace the NeoForge build.
 
@@ -11,7 +11,7 @@ bash gradlew -p fabric build
 bash gradlew -p fabric runClient
 ```
 
-The remapped jar is in `fabric/build/libs/`. Both loaders use the same MineFeed account storage and the v2 development API by default. This is a development build, not a public release. The Fabric project is pinned to 1.21.1; it has not been verified for other Minecraft versions.
+The remapped jar is in `fabric/build/libs/`. Both loaders use the same MineFeed account storage and the production V2 API by default. The Fabric project is pinned to 1.21.1; it has not been verified for other Minecraft versions.
 
 Fabric creates `config/feed-fabric.json` for client settings. Its settings are separate from NeoForge's TOML file; edits to the JSON require a game restart, except the theme, which can also be changed in MineFeed. Unlike NeoForge, this experimental port does not yet provide a settings screen in the mod list.
 

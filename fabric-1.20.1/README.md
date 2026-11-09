@@ -1,6 +1,6 @@
-# Experimental Fabric 1.20.1 port
+# Fabric 1.20.1 port
 
-This is a client-only, experimental port of MineFeed v2 to Minecraft 1.20.1. It uses the same dev API endpoint as the shared client; it is not a production release. Install Fabric Loader 0.18.6 or newer and Fabric API 0.92.12+1.20.1, and run Minecraft with Java 17 or newer. This build is not for NeoForge.
+This is the client-only Fabric port of MineFeed V2 to Minecraft 1.20.1. It uses the same production API endpoint as the shared client. Install Fabric Loader 0.18.6 or newer and Fabric API 0.92.12+1.20.1, and run Minecraft with Java 17 or newer. This build is not for NeoForge.
 
 Build from the repository root with JDK 21:
 

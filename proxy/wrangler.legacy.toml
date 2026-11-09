@@ -6,8 +6,8 @@ workers_dev = true
 preview_urls = false
 
 [vars]
-V1_UPDATE_NOTICE = "MineFeed V1 is no longer supported. MineFeed V2 is coming: github.com/Gaigen/MineFeed/releases — update when available."
-V1_UPDATE_PUBLISHED_AT = "2026-11-09T00:00:00Z"
+V1_UPDATE_NOTICE = "MineFeed V1 is no longer supported. MineFeed V2 is out! Download 0.2.0: github.com/Gaigen/MineFeed/releases/tag/v0.2.0"
+V1_UPDATE_PUBLISHED_AT = "2026-11-09T04:01:56Z"
 
 # No D1 binding and no cron: the V1 Worker serves only the update notice.
 
