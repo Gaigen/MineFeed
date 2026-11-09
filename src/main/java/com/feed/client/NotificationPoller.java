@@ -7,16 +7,16 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.InputEvent;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.HoverEvent;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Files;
@@ -28,13 +28,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Toasts for new items; unread badge until markRead(postId). */
-@EventBusSubscriber(modid = Feed.MOD_ID, value = Dist.CLIENT)
 public final class NotificationPoller {
-    private static final long INTERVAL_MS = 45_000L;
-    private static final long TOAST_MS = 8_000L;
-    private static final int MAX_TOASTS = 3;
     private static final int TOAST_H = 28;
     private static final int TOASTED_CAP = 300;
+    private static final int UNREAD_CAP = 100;
     private static final Gson GSON = new GsonBuilder().create();
 
     private static long lastPoll = 0L;
@@ -62,30 +59,29 @@ public final class NotificationPoller {
 
     private NotificationPoller() {}
 
-    @SubscribeEvent
-    public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+    public static void onLogin() {
         load();
         toasts.clear();
         lastPoll = 0L;
         polling = false;
     }
 
-    @SubscribeEvent
-    public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
+    public static void onLogout() {
         saveSync();
         toasts.clear();
-        unread.clear();
+        // Keep unread in memory after saving: the shutdown hook may save again.
+        // A subsequent login reloads the correct owner's inbox.
     }
 
-    @SubscribeEvent
-    public static void onTick(ClientTickEvent.Post event) {
+    public static void onTick() {
+        com.feed.client.screen.Theme.sync();
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (!loaded) {
             load();
         }
         long now = System.currentTimeMillis();
-        if (polling || now - lastPoll < INTERVAL_MS) return;
+        if (polling || now - lastPoll < FeedConfig.notificationIntervalSeconds() * 1000L) return;
         lastPoll = now;
         polling = true;
         String uuid = mc.getUser().getProfileId().toString();
@@ -93,7 +89,10 @@ public final class NotificationPoller {
             FeedApiClient.INSTANCE.fetchNotifications(uuid, fetchCursor).whenComplete((res, err) -> {
                 polling = false;
                 if (err != null || res == null) return;
-                mc.execute(() -> applyFetch(res));
+                mc.execute(() -> {
+                    if (mc.player != null && mc.level != null
+                            && uuid.equals(mc.getUser().getProfileId().toString())) applyFetch(res);
+                });
             });
         } catch (Exception e) {
             // синхронный сбой не должен навсегда заклинить поллер
@@ -104,24 +103,44 @@ public final class NotificationPoller {
 
     private static void applyFetch(FeedApiClient.NotificationsResult res) {
         if (bootstrapping) {
-            if (res.latest() != null && !res.latest().isEmpty()) {
-                fetchCursor = res.latest();
-                bootstrapping = false;
-                saveSync();
-            }
+            // Preserve existing behavior for old history, but "0" establishes an empty
+            // baseline so the very first future notification is not swallowed.
+            fetchCursor = NotificationOrder.initialCursor(res.latest());
+            bootstrapping = false;
+            saveSync();
             return;
         }
         boolean changed = false;
-        for (FeedApiClient.Notif n : res.notifications()) {
+        boolean hasNew = false;
+        // The service returns newest first. Process oldest first so advancing the
+        // cursor never causes the rest of the same batch to be skipped.
+        List<FeedApiClient.Notif> batch = new ArrayList<>(res.notifications() == null ? List.of() : res.notifications());
+        batch.removeIf(n -> n == null || n.id() == null || n.id().isEmpty());
+        batch.sort((a, b) -> NotificationOrder.compare(a.id(), b.id()));
+        for (FeedApiClient.Notif n : batch) {
             if (n == null || n.id() == null || n.id().isEmpty()) continue;
             if (toastedIds.contains(n.id())) continue;
             if (fetchCursor != null && !idGreater(n.id(), fetchCursor)) continue;
+            if (HiddenPlayers.isHidden(n.actorId()) && !"request".equals(n.kind())) {
+                toastedIds.add(n.id());
+                continue;
+            }
             if (!hasUnreadId(n.id())) {
                 unread.add(n);
+                while (unread.size() > UNREAD_CAP) unread.remove(0);
                 changed = true;
+                hasNew = true;
                 if (toastedIds.add(n.id())) {
                     trimToasted();
-                    toasts.add(new ToastEntry(n, System.currentTimeMillis()));
+                    if (FeedConfig.toastNotificationsEnabled()) {
+                        toasts.add(new ToastEntry(n, System.currentTimeMillis()));
+                    }
+                    if (FeedConfig.chatNotificationsEnabled()) {
+                        Minecraft mc = Minecraft.getInstance();
+                        if (mc.player != null) {
+                            mc.player.displayClientMessage(chatNotification(n), false);
+                        }
+                    }
                 }
             }
             if (fetchCursor == null || idGreater(n.id(), fetchCursor)) {
@@ -133,12 +152,16 @@ public final class NotificationPoller {
             fetchCursor = res.latest();
             changed = true;
         }
+        if (hasNew && FeedConfig.notificationSoundEnabled()) {
+            Minecraft.getInstance().getSoundManager().play(SimpleSoundInstance.forUI(
+                    SoundEvents.NOTE_BLOCK_PLING.value(), 1.0F, FeedConfig.notificationSoundVolume() / 100.0F));
+        }
         if (changed) {
             saveSync();
         }
     }
 
-    private static boolean hasUnreadId(String id) {
+    public static boolean hasUnreadId(String id) {
         for (FeedApiClient.Notif n : unread) {
             if (id.equals(n.id())) return true;
         }
@@ -161,34 +184,35 @@ public final class NotificationPoller {
         Runtime.getRuntime().addShutdownHook(new Thread(NotificationPoller::saveSync, "feed-notif-save"));
     }
 
-    @SubscribeEvent
-    public static void onHud(RenderGuiEvent.Post event) {
+    public static void onHud(GuiGraphics g) {
+        toasts.removeIf(t -> System.currentTimeMillis() - t.shownAt > FeedConfig.toastDurationSeconds() * 1000L);
         if (!FeedConfig.toastNotificationsEnabled()) {
+            toasts.clear();
             return;
         }
-        toasts.removeIf(t -> System.currentTimeMillis() - t.shownAt > TOAST_MS);
         if (toasts.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
-        GuiGraphics g = event.getGuiGraphics();
         int sw = g.guiWidth();
-        int y = 8;
+        int y = Math.min(FeedConfig.toastOffsetY(), Math.max(0, g.guiHeight() - TOAST_H));
         int shown = 0;
+        // Clear previous hitboxes, including toasts hidden by the limit or screen size.
+        for (ToastEntry t : toasts) t.h = 0;
         for (ToastEntry t : toasts) {
-            if (shown++ >= MAX_TOASTS) break;
-            String thread = "\u2192 " + FeedUtil.clip(font, quote(RetroUi.flatten(t.notif.postText())), 110);
-            String body = FeedUtil.clip(font, RetroUi.flatten(t.notif.author() + ": " + t.notif.text()), 120);
-            int w = Math.max(font.width(thread), font.width(body)) + 12;
-            int x = sw - w - 8;
+            if (shown++ >= FeedConfig.maxVisibleToasts() || y + TOAST_H > g.guiHeight()) break;
+            String thread = FeedUtil.clip(font, RetroUi.flatten(formatReply(FeedConfig.toastTitleTemplate(), t.notif)), 120);
+            String body = FeedUtil.clip(font, RetroUi.flatten(formatReply(FeedConfig.toastBodyTemplate(), t.notif)), 120);
+            int w = Math.max(font.width(thread) + 22, font.width(body)) + 12;
+            int x = FeedConfig.toastOnLeft() ? FeedConfig.toastOffsetX() : sw - w - FeedConfig.toastOffsetX();
+            x = Math.max(0, Math.min(x, sw - w));
             boolean hover = isHover(mc, x, y, w, TOAST_H);
-            g.fill(x + 2, y + 2, x + w + 2, y + TOAST_H + 2, RetroUi.SHADOW);
+            g.fill(x + 3, y + 3, x + w + 3, y + TOAST_H + 3, RetroUi.SHADOW);
             g.fill(x, y, x + w, y + TOAST_H, hover ? RetroUi.HOVER_BG : RetroUi.BG);
-            g.fill(x, y, x + w, y + 1, hover ? RetroUi.ACCENT : RetroUi.GRAY);
-            g.fill(x, y + TOAST_H - 1, x + w, y + TOAST_H, RetroUi.GRAY);
-            g.fill(x, y, x + 1, y + TOAST_H, RetroUi.GRAY);
-            g.fill(x + w - 1, y, x + w, y + TOAST_H, RetroUi.GRAY);
-            g.drawString(font, thread, x + 6, y + 4, RetroUi.ACCENT, false);
-            g.drawString(font, body, x + 6, y + 16, RetroUi.FG, false);
+            g.renderOutline(x, y, w, TOAST_H, RetroUi.ACCENT);
+            com.feed.client.screen.PixelIcon.draw(g, "bell", x + 6, y + 5, RetroUi.ACCENT);
+            com.feed.client.screen.RetroUi.drawAvatar(g, font, t.notif.avatar(), t.notif.author(), x + 16, y + 4, 9);
+            g.drawString(font, thread, x + 28, y + 5, RetroUi.ACCENT, false);
+            g.drawString(font, body, x + 6, y + 16, RetroUi.GRAY, false);
             t.x = x;
             t.y = y;
             t.w = w;
@@ -197,26 +221,28 @@ public final class NotificationPoller {
         }
     }
 
-    @SubscribeEvent
-    public static void onMouseClick(InputEvent.MouseButton.Pre event) {
-        if (event.getAction() != GLFW.GLFW_PRESS || event.getButton() != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-            return;
+    public static boolean onMouseClick(int button, int action) {
+        if (!FeedConfig.toastNotificationsEnabled() || action != GLFW.GLFW_PRESS || button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            return false;
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) {
-            return;
+            return false;
         }
         double mx = guiMouseX(mc);
         double my = guiMouseY(mc);
+        int checked = 0;
         for (ToastEntry t : toasts) {
+            if (checked++ >= FeedConfig.maxVisibleToasts()) break;
+            if (System.currentTimeMillis() - t.shownAt > FeedConfig.toastDurationSeconds() * 1000L) continue;
             if (t.h > 0 && mx >= t.x && mx < t.x + t.w && my >= t.y && my < t.y + t.h) {
-                event.setCanceled(true);
                 FeedApiClient.Notif n = t.notif;
                 toasts.remove(t);
-                mc.execute(() -> PostOpener.open(mc, null, n.postId()));
-                return;
+                mc.execute(() -> PostOpener.open(mc, null, n));
+                return true;
             }
         }
+        return false;
     }
 
     public static boolean hasUnread() {
@@ -245,6 +271,15 @@ public final class NotificationPoller {
     }
 
     /** Only when the user opens that thread. Clears current items for the post; future ones still arrive. */
+    public static void markNotifRead(String id) {
+        if (id == null) return;
+        toastedIds.add(id);
+        trimToasted();
+        unread.removeIf(n -> id.equals(n.id()));
+        toasts.removeIf(t -> id.equals(t.notif.id()));
+        saveSync();
+    }
+
     public static void markRead(String postId) {
         if (postId == null) return;
         for (FeedApiClient.Notif n : unread) {
@@ -259,14 +294,35 @@ public final class NotificationPoller {
     }
 
     private static boolean idGreater(String a, String b) {
-        if (a == null || b == null) return a != null;
-        if (a.length() != b.length()) return a.length() > b.length();
-        return a.compareTo(b) > 0;
+        return NotificationOrder.compare(a, b) > 0;
     }
 
-    private static String quote(String s) {
-        if (s == null || s.isEmpty()) return "?";
-        return "\u00ab" + s + "\u00bb";
+    private static Component chatNotification(FeedApiClient.Notif n) {
+        MutableComponent result = Component.literal(formatReply(FeedConfig.chatTemplate(), n))
+                .append("\n").append(Component.translatable("feed.chat.notification.post", safe(n.postText())));
+        if (FeedChatActions.validPostId(n.postId())) {
+            String prefix = FeedChatActions.COMMAND;
+            result.append(" ").append(Component.translatable("feed.chat.action.open")
+                    .withStyle(style -> style.withColor(ChatFormatting.AQUA).withUnderlined(true)
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, prefix + " open " + n.postId()))
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                    Component.translatable("feed.chat.action.open.hover")))));
+            result.append(" ").append(Component.translatable("feed.chat.action.reply")
+                    .withStyle(style -> style.withColor(ChatFormatting.GREEN).withUnderlined(true)
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, prefix + " reply " + n.postId() + " "))
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                                    Component.translatable("feed.chat.action.reply.hover")))));
+        }
+        return result;
+    }
+
+    private static String formatReply(String template, FeedApiClient.Notif n) {
+        return MessageTemplate.render(template, java.util.Map.of(
+                "author", safe(n.author()), "message", safe(n.text()), "post", safe(n.postText())));
+    }
+
+    private static String safe(String value) {
+        return value == null || value.isEmpty() ? "?" : value.replace('\n', ' ').replace('\r', ' ');
     }
 
     private static boolean isHover(Minecraft mc, int x, int y, int w, int h) {
@@ -286,6 +342,13 @@ public final class NotificationPoller {
     }
 
     private static Path file() {
+        String owner = Minecraft.getInstance().getUser().getProfileId().toString();
+        return Minecraft.getInstance().gameDirectory.toPath()
+                .resolve("config").resolve("feed-notifications-" + owner + ".json");
+    }
+
+    /** Pre-account-scoped notification file. Kept intact during migration. */
+    private static Path oldJsonFile() {
         return Minecraft.getInstance().gameDirectory.toPath()
                 .resolve("config").resolve("feed-notifications.json");
     }
@@ -305,13 +368,30 @@ public final class NotificationPoller {
         bootstrapping = false;
         try {
             Path path = file();
+            if (!Files.isRegularFile(path) && Files.isRegularFile(oldJsonFile())) path = oldJsonFile();
             if (Files.isRegularFile(path)) {
                 JsonObject o = GSON.fromJson(Files.readString(path), JsonObject.class);
                 if (o != null) {
+                    String owner = FeedUtil.jstr(o, "owner");
+                    String currentOwner = Minecraft.getInstance().getUser().getProfileId().toString();
+                    if (owner != null && !owner.equalsIgnoreCase(currentOwner)) {
+                        bootstrapping = true;
+                        return;
+                    }
                     if (o.has("cursor") && !o.get("cursor").isJsonNull()) {
                         fetchCursor = o.get("cursor").getAsString();
                     }
-                    // unread is session-only — do not restore (was causing ghost alerts after restart)
+                    // Old-format unread values are intentionally not restored.
+                    if (owner != null && o.has("inboxVersion") && o.get("inboxVersion").getAsInt() == 2
+                            && o.has("unread") && o.get("unread").isJsonArray()) {
+                        for (JsonElement el : o.getAsJsonArray("unread")) {
+                            try {
+                                FeedApiClient.Notif n = GSON.fromJson(el, FeedApiClient.Notif.class);
+                                if (n != null && n.id() != null && !n.id().isEmpty() && !hasUnreadId(n.id())) unread.add(n);
+                            } catch (Exception ignored) { }
+                        }
+                        while (unread.size() > UNREAD_CAP) unread.remove(0);
+                    }
                     if (o.has("toasted") && o.get("toasted").isJsonArray()) {
                         for (JsonElement el : o.getAsJsonArray("toasted")) {
                             toastedIds.add(el.getAsString());
@@ -319,7 +399,7 @@ public final class NotificationPoller {
                     }
                     // ключ "readPosts" из старых билдов сознательно игнорируется (мьютил треды навсегда)
                     // one-time migration from older builds that only persisted unread[]
-                    if (o.has("unread") && o.get("unread").isJsonArray()) {
+                    if (!o.has("inboxVersion") && o.has("unread") && o.get("unread").isJsonArray()) {
                         boolean migrated = false;
                         for (JsonElement el : o.getAsJsonArray("unread")) {
                             if (!el.isJsonObject()) continue;
@@ -336,6 +416,7 @@ public final class NotificationPoller {
                     }
                 }
                 bootstrapping = fetchCursor == null || fetchCursor.isEmpty();
+                if (!path.equals(file())) saveSync(); // Copy legacy state; never delete the old file.
                 return;
             }
             if (Files.isRegularFile(legacyFile())) {
@@ -358,15 +439,26 @@ public final class NotificationPoller {
         CompletableFuture.runAsync(NotificationPoller::saveSync);
     }
 
-    private static void saveSync() {
+    private static synchronized void saveSync() {
         try {
             Files.createDirectories(file().getParent());
             JsonObject o = new JsonObject();
             o.addProperty("cursor", fetchCursor);
+            o.addProperty("inboxVersion", 2);
+            o.addProperty("owner", Minecraft.getInstance().getUser().getProfileId().toString());
+            o.add("unread", GSON.toJsonTree(new ArrayList<>(unread)));
             JsonArray toasted = new JsonArray();
             for (String id : toastedIds) toasted.add(id);
             o.add("toasted", toasted);
-            Files.writeString(file(), GSON.toJson(o));
+            Path target = file();
+            Path temp = target.resolveSibling(target.getFileName().toString() + ".tmp");
+            Files.writeString(temp, GSON.toJson(o));
+            try {
+                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (Exception e) {
             Feed.LOG.debug("notification save failed", e);
         }

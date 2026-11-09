@@ -1,0 +1,119 @@
+name: Build MineFeed
+
+on:
+  push:
+    # Pull requests already build their source branch; avoid duplicate CI runs.
+    branches: ['master']
+    tags: ['v[0-9]*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests and release safeguards
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Validate release tag and production API
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 ci/check_release.py "$RELEASE_TAG"
+      - name: Test release packaging
+        run: python3 -m unittest discover -s ci/tests -v
+      - name: Test release names against Discord bot
+        run: node --test ci/tests/*.test.mjs
+      - name: Test Java client logic
+        run: bash tests/run-template-tests.sh
+      - name: Test server
+        run: node --test server/test/*.test.mjs
+      - name: Test V1 update notice
+        run: node --test proxy/test/*.test.mjs
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '18'
+      - name: Test Discord bot on the server's Node version
+        run: node --test bot/test/*.test.mjs
+
+  build:
+    name: ${{ matrix.loader }} ${{ matrix.minecraft }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { loader: neoforge, minecraft: '1.21.1', java: '21', project: '.', wrapper: 'gradlew' }
+          - { loader: fabric, minecraft: '1.21.1', java: '21', project: 'fabric', wrapper: 'gradlew' }
+          - { loader: fabric, minecraft: '1.20.1', java: '21', project: 'fabric-1.20.1', wrapper: 'gradlew' }
+          - { loader: neoforge, minecraft: '1.20.1', java: '21', project: 'neoforge-1.20.1', wrapper: 'neoforge-1.20.1/gradlew' }
+          - { loader: fabric, minecraft: '26.1.2', java: '25', project: 'fabric-26.1.2', wrapper: 'fabric-26.1.2/gradlew' }
+          - { loader: neoforge, minecraft: '26.1.2', java: '25', project: 'neoforge-26.1.2', wrapper: 'neoforge-26.1.2/gradlew' }
+    env:
+      CI: 'true'
+      # NeoForm's decompiler otherwise requests a large heap; two processors avoid
+      # overcommitting GitHub-hosted runners. This applies to child Java processes.
+      _JAVA_OPTIONS: '-Xmx3000m -XX:ActiveProcessorCount=2'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Build
+        env:
+          WRAPPER: ${{ matrix.wrapper }}
+          PROJECT: ${{ matrix.project }}
+        run: bash "$WRAPPER" -p "$PROJECT" build --no-daemon --max-workers=2
+      - name: Validate and package distributable
+        env:
+          PROJECT: ${{ matrix.project }}
+          MC: ${{ matrix.minecraft }}
+          LOADER: ${{ matrix.loader }}
+        run: python3 ci/package_mod.py --libs "$PROJECT/build/libs" --output dist --loader "$LOADER" --minecraft "$MC"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: minefeed-${{ matrix.minecraft }}-${{ matrix.loader }}
+          path: dist/*.jar
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    name: Prepare GitHub release draft
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: minefeed-*
+          path: dist
+          merge-multiple: true
+      - name: Verify all six artifacts
+        run: python3 ci/verify_set.py dist
+      - name: Create draft (never publishes automatically)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; not replacing it." >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" dist/*.jar --verify-tag --draft --title "MineFeed ${RELEASE_TAG#v}" --generate-notes

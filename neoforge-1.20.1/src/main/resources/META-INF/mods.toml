@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="GPL-3.0-or-later"
+[[mods]]
+modId="feed"
+version="${modVersion}"
+displayName="MineFeed"
+description='''Global social feed for Minecraft. Client-only.'''
+authors="Gaigen"
+[[dependencies.feed]]
+modId="forge"
+mandatory=true
+versionRange="[47.1.106,)"
+ordering="NONE"
+side="CLIENT"
+[[dependencies.feed]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.20.2)"
+ordering="NONE"
+side="CLIENT"

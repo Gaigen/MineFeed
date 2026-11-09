@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.feed.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "MultiLineEditBoxAccessor",
+    "ContainerScreenAccessor",
+    "DeathScreenAccessor",
+    "FabricMouseMixin",
+    "FabricAdvancementsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

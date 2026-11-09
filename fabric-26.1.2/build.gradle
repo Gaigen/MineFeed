@@ -1,0 +1,16 @@
+plugins { id 'net.fabricmc.fabric-loom' version '1.19.3' }
+def modProperties = new Properties()
+file('../gradle.properties').withInputStream { modProperties.load(it) }
+version = modProperties.getProperty('mod_version')
+group = 'com.feed'
+base { archivesName = 'feed-fabric-26.1.2' }
+repositories { mavenCentral() }
+dependencies {
+ minecraft 'com.mojang:minecraft:26.1.2'
+ implementation 'net.fabricmc:fabric-loader:0.20.1'
+ implementation 'net.fabricmc.fabric-api:fabric-api:0.155.3+26.1.2'
+}
+java { toolchain.languageVersion = JavaLanguageVersion.of(25) }
+tasks.withType(JavaCompile).configureEach { options.encoding='UTF-8'; options.release=25; options.compilerArgs += ['-Xmaxerrs','500'] }
+processResources { exclude 'assets/feed/font/OFL.txt'; filesMatching('fabric.mod.json') { expand version: project.version } }
+jar { from('../LICENSE') { rename { 'LICENSE_MineFeed' } }; from('../src/main/resources/assets/feed/font/OFL.txt') { rename { 'FONT_LICENSE_OFL.txt' } } }

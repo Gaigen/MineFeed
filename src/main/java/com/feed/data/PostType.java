@@ -10,16 +10,22 @@ public enum PostType {
 
     public final String id;
     public final String prefix;
-    public final int accent;
+    private final int baseAccent;
+    /** Theme adaptation of the 8-bit colors (set by the client theme). */
+    public static java.util.function.IntUnaryOperator tint = c -> c;
     public final String reactionA;
     public final String reactionB;
 
     PostType(String id, String prefix, int accent, String reactionA, String reactionB) {
         this.id = id;
         this.prefix = prefix;
-        this.accent = accent;
+        this.baseAccent = accent;
         this.reactionA = reactionA;
         this.reactionB = reactionB;
+    }
+
+    public int accent() {
+        return tint.applyAsInt(baseAccent);
     }
 
     public List<String> reactions() {

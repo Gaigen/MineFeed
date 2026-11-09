@@ -2,10 +2,7 @@ package com.feed.client.screen;
 
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.api.distmarker.OnlyIn;
 
-@OnlyIn(Dist.CLIENT)
 public abstract class RetroScreen extends Screen {
 
     protected static final int MAX_CONTENT_W = 360;

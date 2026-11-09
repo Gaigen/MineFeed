@@ -1,0 +1,10 @@
+{
+  "name": "minefeed-bot",
+  "private": true,
+  "type": "module",
+  "description": "MineFeed Discord gateway relay: forwards forum events to the MineFeed Worker in batches",
+  "main": "index.js",
+  "engines": { "node": ">=18.17" },
+  "scripts": { "start": "node index.js", "test": "node --test test/*.test.mjs" },
+  "dependencies": { "discord.js": "^14.16.0" }
+}

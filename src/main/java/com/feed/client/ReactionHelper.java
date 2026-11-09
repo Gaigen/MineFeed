@@ -11,7 +11,7 @@ public final class ReactionHelper {
     }
 
     public static void toggle(Post post, String key, Consumer<FeedApiClient.ReactResult> onSuccess) {
-        FeedApiClient.INSTANCE.toggleReaction(post.id, key)
+        FeedApiClient.INSTANCE.toggleReaction(post, key)
                 .whenComplete((r, ex) -> Minecraft.getInstance().execute(() -> {
                     if (ex != null || r == null) {
                         return;

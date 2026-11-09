@@ -1,0 +1,39 @@
+# MineFeed V2 production. This Worker keeps the existing client URL; see LAUNCH-v2.md.
+name = "minefeed-dev"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+preview_urls = false
+
+[vars]
+MIN_CLIENT = "0.2.0"
+LATEST_CLIENT = "0.2.0"
+DISCORD_CLIENT_ID = "1525463800654856263"
+DISCORD_INVITE = "https://discord.gg/FzZBQ43ujk"
+DOWNLOAD_URL = "https://www.curseforge.com/minecraft/mc-mods/minefeed"
+DISCORD_GUILD_ID = "1525462612920504420"
+FEED_FORUM_ID = "1568042886967070761"
+COMMUNITY_CATEGORY_ID = "1569191969870061671"
+# forum tag ids in FEED_FORUM_ID
+MOD_ROLE_ID = "1567664207342604449"
+COMMUNITY_MAX_MEMBERS = "200"
+REPORT_CHANNEL_ID = "1525462614044315770"
+APPLICATIONS_CHANNEL_ID = "1568042890129838161"
+SYNC_OPEN = "12"
+SYNC_CLOSED = "120"
+FEED_TAGS = '{"rip":"1568042886967070762","help":"1568042886967070763","gg":"1568042886967070764","talk":"1568042886967070765","solved":"1568042886967070766"}'
+# age-restricted forum for 18+ posts of the global feed (tags incl. "nsfw" = the 18+ tag)
+FEED18_FORUM_ID = "1568042888166899795"
+FEED18_TAGS = '{"rip":"1568042888166899796","help":"1568042888166899797","gg":"1568042888166899798","talk":"1568042888166899799","solved":"1568042888166899800","nsfw":"1568042888166899801"}'
+
+[[d1_databases]]
+binding = "DB"
+database_name = "minefeed-v2-prod"
+database_id = "1ef6bc1c-b90e-4563-a80a-e95a565a273d"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+[triggers]
+crons = ["17 4 * * *"]

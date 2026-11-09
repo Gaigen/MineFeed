@@ -7,7 +7,10 @@ import java.util.Map;
 public class Post {
     public String id;
     public String author;
-    public String uuid;
+    public String uuid;      // v2: author account id (null for Discord authors)
+    public String authorTag; // v2: @tag without "@", null for Discord authors
+    public boolean fromDiscord;
+    public String avatar;    // "skin:<uuid>" | "discord:<id>/<hash>" | null
     public String text;
     public String type;
     public String createdAt;
@@ -16,8 +19,37 @@ public class Post {
     public String myReaction;
     public List<String> tags;
     public boolean solved;
+    public String space;    // "global" or community id
+    public String imageUrl; // first picture (Discord CDN), null when none
+    public int imageW;
+    public int imageH;
+    public boolean edited;
+    public boolean pinned;
+    /** 18+ post of the global feed (only players who turned on "Show 18+" get them). */
+    public boolean nsfw;
+    /** The picture stays covered until clicked. */
+    public boolean imageSpoiler;
+    /** Poll options, or null when the post has no poll. */
+    public List<String> pollOptions;
+    public int[] pollVotes;
+    /** Index of my vote, -1 = not voted. */
+    public int pollMy = -1;
 
     public Post() {
+    }
+
+    public boolean hasPoll() {
+        return pollOptions != null && !pollOptions.isEmpty();
+    }
+
+    public int pollTotal() {
+        int t = 0;
+        if (pollVotes != null) {
+            for (int v : pollVotes) {
+                t += v;
+            }
+        }
+        return t;
     }
 
     public PostType postType() {
@@ -37,6 +69,6 @@ public class Post {
     }
 
     public int prefixColor() {
-        return solved ? 0xFF55FF55 : postType().accent;
+        return solved ? PostType.tint.applyAsInt(0xFF55FF55) : postType().accent();
     }
 }

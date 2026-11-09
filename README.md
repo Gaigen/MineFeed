@@ -1,42 +1,25 @@
 # MineFeed
 
-**A social feed inside Minecraft.** One global timeline shared by every player with the mod — post, comment, react and get replies without leaving the game.
+A client-side social feed inside Minecraft. Share posts, comments and reactions across worlds and servers, and follow the conversation in Discord. No server-side mod is needed.
 
-**Client-only** — drop the jar into `mods/` and that's it. No server-side mod, no account, no setup. Works on any server and in singleplayer; you post under your Minecraft nickname and skin.
+## Features
 
-## Why
-
-Minecraft moments usually die in screenshots nobody sees. MineFeed gives them a place: died a stupid death? Post it. Stuck on a build or a farm? Ask for help. Finally beat the dragon? Brag. Everyone running the mod sees it — across servers and worlds.
-
-## What's inside
-
-- **4 kinds of posts**: `[~]` talk, `[?]` help (can be marked solved), `[GG]` achievements, `[F]` deaths
-- **Comments** under every post
-- **Reactions** — each post type has its own pair, one per player, toggleable
-- **#tags** — tag your posts, browse tag feeds, autocomplete while typing
-- **Reply notifications** — on-screen toast when someone answers your post; click it to jump into the thread
-- **Death posts** — one click after respawn to share your death message
-- **GG on advancement** — optional auto-compose when you earn an advancement
-- Retro-styled UI with real player avatars
-
-## How to open
-
-- Key **J** (Controls → MineFeed)
-- **MF** button next to the inventory (can be disabled in settings)
+- Global feed with talk, help, achievement and death posts, comments, reactions and hashtags.
+- Notifications, accounts, optional Discord linking and communities.
+- Open the feed with **J** or the **MF** button next to the inventory.
 
 ## Install
 
-1. NeoForge 1.21.1
-2. Drop the jar into `mods/`
-3. Done
+1. Choose the release JAR matching **both** your Minecraft version and loader: Fabric or NeoForge. Supported builds are 1.20.1, 1.21.1 and 26.1.2.
+2. Install the matching loader and any dependencies required by that build; Fabric builds also require Fabric API. Put the JAR in your client `mods` folder.
+3. Open MineFeed in game. Create an account with a nickname and unique tag, or recover an existing account. Save the recovery code somewhere safe: it is shown when issued and is needed to recover access.
 
-Settings: Mods → MineFeed → Config (inventory button and offsets, death-post prompt, toast notifications, GG-compose).
+MineFeed 0.2.0 uses the V2 API, which is incompatible with the old V1 client. Existing V1 users need to update. V2 starts on a fresh account database; accounts from the prior V2 test environment do not carry over.
 
-## Build from source
+## Build and release
 
-    .\gradlew build          # jar in build/libs/
-    .\gradlew runClient      # dev client
+See [CI and release instructions](ci/README.md) for the six builds, release drafts and validation. See [server launch instructions](server/LAUNCH-v2.md) for deployment and the V1 migration.
 
 ## License
 
-GPL-3.0-or-later — [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
