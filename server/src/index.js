@@ -12,6 +12,7 @@ import * as B from "./bot.js";
 import * as C from "./communities.js";
 import * as AP from "./applications.js";
 import * as H from "./hashtags.js";
+import * as Catalog from "./catalog.js";
 
 const API = 2;
 
@@ -80,6 +81,10 @@ export async function route(request, env, now) {
   if (p === "/v2/bot/events" && m === "POST") {
     await B.checkBot(request, env);
     return json(await B.events(env, await readJson(request, 256 * 1024), now));
+  }
+  if (p === "/v2/bot/catalog" && m === "POST") {
+    await B.checkBot(request, env);
+    return json(await Catalog.lookup(env, await readJson(request, 4096), now));
   }
   if (p.startsWith("/v2/bot/apply") && m === "POST") {
     await B.checkBot(request, env);

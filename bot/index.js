@@ -11,6 +11,7 @@ import { makeUpdatingAnnouncer } from "./release-updater.js";
 import { fileReleaseState } from "./release-state.js";
 import { releaseEditPayload } from "./release-message.js";
 import { join } from "node:path";
+import { CATALOG_COMMANDS, makeCatalog, catalogState } from "./catalog.js";
 import { makePings, parseRoles } from "./pings.js";
 
 loadEnvFile(new URL("./.env", import.meta.url).pathname);
@@ -35,7 +36,34 @@ const filter = makeFilter({ guildId: GUILD_ID, categories: process.env.FEED_CATE
 const onInteraction = makeApplications({ call: workerClient({ url: WORKER_URL, secret: BOT_SECRET }), modRoleId: MOD_ROLE_ID });
 const pingRoles = parseRoles(process.env.PING_ROLES);
 const onPing = makePings({ roles: pingRoles });
-client.on("interactionCreate", async (i) => { if (!(await onPing(i))) onInteraction(i); });
+const catalogForumId = process.env.COMMUNITY_CATALOG_FORUM_ID || "";
+const catalogForum = catalogForumId ? {
+  async create(card) {
+    const forum = await client.channels.fetch(catalogForumId);
+    const thread = await forum.threads.create({ name: card.title, message: { content: card.content, allowedMentions: { parse: [] } }, reason: "Community owner confirmed publication" });
+    return { id: thread.id, url: thread.url };
+  },
+  async update(id, card) {
+    const thread = await client.channels.fetch(id);
+    if (!thread || thread.parentId !== catalogForumId) { const e = new Error("catalog thread missing"); e.code = 10003; throw e; }
+    if (thread.archived) await thread.setArchived(false);
+    const message = await thread.fetchStarterMessage();
+    if (!message || message.author.id !== client.user.id) throw new Error("catalog post is not owned by the bot");
+    await thread.setName(card.title);
+    await message.edit({ content: card.content, allowedMentions: { parse: [] } });
+    return thread.url;
+  },
+  async remove(id) {
+    const thread = await client.channels.fetch(id);
+    if (!thread || thread.parentId !== catalogForumId) { const e = new Error("catalog thread missing"); e.code = 10003; throw e; }
+    const message = await thread.fetchStarterMessage();
+    if (!message || message.author.id !== client.user.id) throw new Error("catalog post is not owned by the bot");
+    await thread.delete("Community owner removed their announcement");
+  },
+} : null;
+const onCatalog = makeCatalog({ call: workerClient({ url: WORKER_URL, secret: BOT_SECRET }), forum: catalogForum,
+  state: catalogState(join(process.env.STATE_DIRECTORY || ".", "community-catalog.json")) });
+client.on("interactionCreate", async (i) => { if (await onPing(i)) return; if (await onCatalog(i)) return; await onInteraction(i); });
 
 let forwarded = 0;
 client.on("raw", (packet) => {
@@ -60,7 +88,7 @@ client.once("clientReady", async () => {
   console.log(`ready as ${client.user.tag}`);
   try {
     // guild command: shows up instantly, replaces the previous set
-    await client.application.commands.set([COMMAND], GUILD_ID);
+    await client.application.commands.set([COMMAND, ...CATALOG_COMMANDS], GUILD_ID);
   } catch (e) {
     console.warn("command registration failed:", e.message);
   }

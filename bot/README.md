@@ -45,6 +45,14 @@ The Worker posts the application to `APPLICATIONS_CHANNEL_ID` with Approve/Rejec
 Only members with `MOD_ROLE_ID` or Administrator can press them; Reject asks for an optional reason.
 On approval the Worker creates the community, a pinned welcome post and DMs the player.
 
+## Community directory
+
+Set `COMMUNITY_CATALOG_FORUM_ID` to the public Discord forum reserved for bot-created announcements. Keep this forum out of the feed relay filter. The bot needs permission to view the forum, create posts, read history, manage its threads and send messages in threads. Regular members may read and reply, but should not create posts directly.
+
+The owner links Discord to their MineFeed profile, creates an active invite code in the mod, then runs `/community-publish code:<code>`. The bot checks ownership and the code with the Worker and shows a private preview. Publishing happens only after the same user confirms; the code and displayed community details become public. Running the command again updates the existing post. `/community-unpublish` removes the post but does not revoke the code; revoke it in the mod if it should stop working. Marked 18+ communities receive `[18+]` in their title. Posts must remain suitable for a general-audience forum and comply with Discord rules.
+
+The post does not automatically track later community changes or code revocation: run `/community-publish` again with a valid code, or unpublish it. Keep `/var/lib/minefeed-bot/community-catalog.json` alongside the release state during deployments; losing it prevents reliable updates or removal. Never automatically replace a corrupt state file with an empty one.
+
 ## Release announcements and ping roles
 
 - `releases.js` polls GitHub releases, Modrinth and CurseForge (via cfwidget) every 10 minutes for the mods in `PROJECTS`
